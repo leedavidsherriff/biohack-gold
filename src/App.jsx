@@ -795,6 +795,49 @@ video::-webkit-media-controls-overlay-play-button {
 }
 .build-row.on .tickbox { background:var(--primary); border-color:var(--primary); color:#14120C; }
 .pairtag { font-size:10px; font-weight:700; color:var(--accent); letter-spacing:.05em; text-transform:uppercase; }
+/* ---------- builder: choose an area ---------- */
+.goal-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+/* Each area is its own labelled specimen, tinted to the domain hue and
+   bleeding off the corner. One idea per card: the vial and its glow. */
+.goal-card {
+  position:relative; overflow:hidden; isolation:isolate;
+  min-height:142px; padding:15px; border-radius:16px;
+  border:1px solid var(--border); background:var(--surface);
+  text-align:left; display:flex; flex-direction:column; justify-content:flex-end;
+  transition:border-color .18s, transform .14s;
+}
+.goal-aura {
+  position:absolute; inset:0; z-index:-1; pointer-events:none;
+  background:
+    radial-gradient(70% 70% at 76% 16%, hsla(var(--gh),62%,56%,.24), transparent 68%),
+    linear-gradient(200deg, hsla(var(--gh),50%,40%,.10), transparent 55%);
+  transition:opacity .22s;
+}
+.goal-vial {
+  position:absolute; top:-14px; right:-16px; line-height:0; z-index:-1;
+  transform:rotate(7deg); transform-origin:center;
+  filter:drop-shadow(0 12px 20px rgba(0,0,0,.55));
+  transition:transform .28s cubic-bezier(.25,.9,.3,1);
+}
+.goal-vial-stack { display:flex; align-items:flex-end; gap:-6px; right:-22px; }
+.goal-vial-stack > :first-child { transform:rotate(-10deg) translateX(14px); opacity:.75; }
+.goal-card:hover { border-color:color-mix(in srgb, var(--primary) 48%, transparent); }
+.goal-card:hover .goal-vial { transform:rotate(7deg) translateY(-4px) scale(1.03); }
+.goal-card:active { transform:scale(.985); }
+.goal-text { position:relative; }
+.goal-card h3 { font-size:15.5px; letter-spacing:-0.02em; }
+.goal-meta { font-size:11.5px; color:var(--muted); display:block; margin-top:3px; }
+.goal-card-all { border-style:dashed; }
+
+.startstack {
+  border:1px solid var(--border); border-radius:15px; padding:14px; background:var(--surface);
+  display:flex; flex-direction:column; transition:.16s;
+}
+.startstack.is-loaded {
+  border-color:color-mix(in srgb, var(--primary) 45%, transparent);
+  background:color-mix(in srgb, var(--primary) 7%, var(--surface));
+}
+
 .summary-dock {
   position:fixed; left:0; right:0; bottom:calc(var(--nav) + env(safe-area-inset-bottom)); z-index:35;
   background:color-mix(in srgb, var(--surface) 94%, transparent);
@@ -906,6 +949,7 @@ video::-webkit-media-controls-overlay-play-button {
 @media (min-width:760px) {
   .grid { grid-template-columns:repeat(3,1fr); gap:14px; }
   .trustgrid { grid-template-columns:repeat(4,1fr); }
+  .goal-grid { grid-template-columns:repeat(3,1fr); }
   .two-col { display:grid; grid-template-columns:1fr 1fr; gap:28px; align-items:start; }
   .section { padding:34px 0; }
   .hero { padding:44px 0 14px; }
@@ -980,8 +1024,9 @@ function Vial({ label, hue = 44, size = 132, dim = false }) {
       {/* label band */}
       <rect x="29" y="47" width="42" height="30" fill="rgba(12,12,14,.82)" />
       <rect x="29" y="47" width="42" height="30" fill="none" stroke="rgba(255,255,255,.10)" />
-      <text x="50" y="60" textAnchor="middle" fill="rgba(255,255,255,.92)" fontSize="8.5" fontWeight="700"
-        fontFamily="ui-monospace, Menlo, monospace" letterSpacing="-0.2">{String(label).slice(0, 9)}</text>
+      <text x="50" y="60" textAnchor="middle" fill="rgba(255,255,255,.92)"
+        fontSize={String(label).length > 7 ? 6.4 : 8.5} fontWeight="700"
+        fontFamily="ui-monospace, Menlo, monospace" letterSpacing="-0.2">{String(label).slice(0, 10)}</text>
       <text x="50" y="70" textAnchor="middle" fill={`hsl(${hue},55%,62%)`} fontSize="5.4" fontWeight="600"
         fontFamily="ui-monospace, Menlo, monospace" letterSpacing="0.5">≥99% HPLC</text>
       {/* glass highlight */}
@@ -1001,6 +1046,13 @@ const hueFor = p => GOAL_HUE[p.goals?.[0]] ?? 44
 const GOAL_SHOT = {
   recovery: 'green', growth: 'gold', metabolic: 'gold', longevity: 'ice',
   immune: 'ice', cognition: 'violet', sleep: 'violet', cosmetic: 'violet',
+}
+
+/* Short enough to sit on a vial label without shrinking to nothing. */
+const GOAL_CODE = {
+  recovery: 'RECOVERY', growth: 'GROWTH', metabolic: 'METABOLIC',
+  cognition: 'COGNITION', cosmetic: 'COSMETIC', sleep: 'SLEEP',
+  immune: 'IMMUNE', longevity: 'LONGEVITY',
 }
 const shotFor = p => BIZ.media?.shots?.[p.shot || GOAL_SHOT[p.goals?.[0]] || 'gold']
 
@@ -1549,8 +1601,14 @@ function StacksView({ addStack, openProduct, go }) {
   )
 }
 
-function Builder({ addBundle, toast, openProduct }) {
-  const [sel, setSel] = useState({})            // { productId: sizeLabel }
+/* The stack builder is the funnel, so it opens on a question rather than a
+   wall of twenty compounds: pick the research area first, and the curated
+   stacks for that area come forward as a starting point. Everything a person
+   ticks stays selected across areas — the running total is global. */
+/* `goal` and `sel` are owned by App, not here: the bottom nav has to be able to
+   send you back to the chooser, and a half-built stack must survive a trip to a
+   product page and back. */
+function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) {
   const [bumped, setBumped] = useState(false)
   const prevPct = useRef(0)
 
@@ -1579,10 +1637,14 @@ function Builder({ addBundle, toast, openProduct }) {
     return next
   })
 
-  const byGoal = useMemo(() => {
-    const groups = BIZ.goals.map(g => ({ ...g, items: BIZ.products.filter(p => p.goals?.includes(g.id)) }))
-    return groups.filter(g => g.items.length)
-  }, [])
+  const startFrom = stack => {
+    setSel(prev => {
+      const next = { ...prev }
+      stack.productIds.forEach(id => { if (!next[id]) next[id] = PRODUCTS[id].sizes[0].label })
+      return next
+    })
+    toast(`${stack.name} loaded — add more to climb the tiers`)
+  }
 
   const commit = () => {
     const lines = ids.map(id => ({ productId: id, size: sel[id], qty: 1 }))
@@ -1591,16 +1653,124 @@ function Builder({ addBundle, toast, openProduct }) {
     setSel({})
   }
 
+  const areas = useMemo(() => BIZ.goals.map(g => ({
+    ...g,
+    items: BIZ.products.filter(p => p.goals?.includes(g.id)),
+    stacks: BIZ.stacks.filter(s => s.goal === g.id),
+  })).filter(a => a.items.length), [])
+
+  const dock = distinct > 0 && (
+    <div className="summary-dock">
+      <div className="dock-inner">
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+          <b style={{ fontSize: 14 }}>{distinct} {distinct === 1 ? 'compound' : 'compounds'}</b>
+          <div className="spacer" />
+          {saving > 0 && <span className="was">{money(subtotal)}</span>}
+          <span className={cx('price', bumped && 'pulse')} style={{ fontSize: 19 }}>{money(subtotal - saving)}</span>
+        </div>
+        <TierMeter distinct={distinct} pct={pct} />
+        <div style={{ display: 'flex', gap: 9, marginTop: 11, alignItems: 'center' }}>
+          {saving > 0 && <span className="saveflag">Saving {money(saving)}</span>}
+          <div className="spacer" />
+          <button className="btn btn-sm btn-ghost" onClick={() => setSel({})}>Clear</button>
+          <button className="btn btn-primary btn-sm" onClick={commit}>Add stack to cart</button>
+        </div>
+      </div>
+    </div>
+  )
+
+  /* ---------- step 1: pick the area ---------- */
+  if (!goal) {
+    return (
+      <div className="view wrap" style={{ paddingBottom: distinct ? 150 : 0 }}>
+        <section className="section" style={{ paddingBottom: 10 }}>
+          <div className="eyebrow">Stack builder</div>
+          <h2 style={{ fontSize: 24 }}>What are you researching?</h2>
+          <p className="small muted" style={{ marginTop: 8, maxWidth: '50ch' }}>
+            Pick an area and the stacks commonly used in it come up first. The bundle discount grows
+            as your stack grows — up to{' '}
+            <b style={{ color: 'var(--primary)' }}>{BIZ.discountTiers[BIZ.discountTiers.length - 1].pct}% off</b> at{' '}
+            {BIZ.discountTiers[BIZ.discountTiers.length - 1].minItems} compounds.
+          </p>
+        </section>
+
+        <div className="goal-grid">
+          {areas.map(a => {
+            const hue = GOAL_HUE[a.id] ?? 44
+            return (
+              <button key={a.id} className="goal-card" onClick={() => setGoal(a.id)}
+                style={{ '--gh': hue }}>
+                <span className="goal-aura" aria-hidden="true" />
+                <span className="goal-vial" aria-hidden="true">
+                  <Vial label={GOAL_CODE[a.id] || a.label} hue={hue} size={96} />
+                </span>
+                <span className="goal-text">
+                  <h3>{a.label}</h3>
+                  <span className="goal-meta">
+                    {a.items.length} {a.items.length === 1 ? 'compound' : 'compounds'}
+                    {a.stacks.length > 0 && ` · ${a.stacks.length} ${a.stacks.length === 1 ? 'stack' : 'stacks'}`}
+                  </span>
+                </span>
+              </button>
+            )
+          })}
+          <button className="goal-card goal-card-all" onClick={() => setGoal('all')} style={{ '--gh': 44 }}>
+            <span className="goal-aura" aria-hidden="true" />
+            <span className="goal-vial goal-vial-stack" aria-hidden="true">
+              <Vial label="IMMUNE" hue={190} size={72} />
+              <Vial label="RECOVERY" hue={150} size={82} />
+            </span>
+            <span className="goal-text">
+              <h3>Show everything</h3>
+              <span className="goal-meta">All {BIZ.products.filter(p => p.goals?.length).length} compounds</span>
+            </span>
+          </button>
+        </div>
+
+        <section className="section"><DisclaimerBox compact /></section>
+        {dock}
+      </div>
+    )
+  }
+
+  /* ---------- step 2: the area ---------- */
+  const area = areas.find(a => a.id === goal)
+  const showAll = goal === 'all'
+  const items = showAll ? BIZ.products.filter(p => p.goals?.length) : (area?.items || [])
+  const stacks = showAll ? BIZ.stacks : (area?.stacks || [])
+  const label = showAll ? 'Everything' : (area?.label || '')
+
+  // Partners the selection pulls in from other areas — the cross-domain
+  // suggestions would otherwise be invisible once the list is filtered.
+  const elsewhere = [...suggested].map(id => PRODUCTS[id])
+    .filter(p => p && !items.some(x => x.id === p.id))
+
+  const Row = ({ p }) => {
+    const on = !!sel[p.id]
+    const sug = !on && suggested.has(p.id)
+    return (
+      <button className={cx('build-row', on && 'on', sug && 'suggested')} onClick={() => toggle(p.id)}>
+        <span className="tickbox">{on && I.check()}</span>
+        <Vial label={p.name} hue={hueFor(p)} size={30} />
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: 'block', fontWeight: 650, fontSize: 14 }}>{p.name}</span>
+          {sug
+            ? <span className="pairtag">Commonly researched with your selection</span>
+            : <span className="tiny muted">{p.sizes[0].label} · {p.purity}</span>}
+        </span>
+        <span className="price" style={{ fontSize: 14 }}>{money(priceOf(p.id, sel[p.id] || p.sizes[0].label))}</span>
+      </button>
+    )
+  }
+
   return (
-    <div className="view wrap" style={{ paddingBottom: distinct ? 132 : 0 }}>
+    <div className="view wrap" style={{ paddingBottom: distinct ? 150 : 0 }}>
       <section className="section" style={{ paddingBottom: 8 }}>
+        <button className="btn btn-sm btn-ghost" style={{ paddingLeft: 0, marginBottom: 6 }} onClick={() => setGoal(null)}>
+          {I.back({ width: 17, height: 17 })} Change area
+        </button>
         <div className="eyebrow">Stack builder</div>
-        <h2 style={{ fontSize: 24 }}>Build your own</h2>
-        <p className="small muted" style={{ marginTop: 8, maxWidth: '52ch' }}>
-          Select the compounds you need. The bundle discount grows as the stack grows — up to{' '}
-          <b style={{ color: 'var(--primary)' }}>{BIZ.discountTiers[BIZ.discountTiers.length - 1].pct}% off</b> at{' '}
-          {BIZ.discountTiers[BIZ.discountTiers.length - 1].minItems} compounds.
-        </p>
+        <h2 style={{ fontSize: 24 }}>{label}</h2>
         <div style={{ display: 'flex', gap: 6, marginTop: 14, flexWrap: 'wrap' }}>
           {BIZ.discountTiers.map(t => (
             <span key={t.minItems} className={cx('chip', distinct >= t.minItems ? 'chip-gold' : 'chip-out')}>
@@ -1610,54 +1780,76 @@ function Builder({ addBundle, toast, openProduct }) {
         </div>
       </section>
 
-      {byGoal.map(g => (
-        <section className="section" style={{ paddingTop: 8, paddingBottom: 8 }} key={g.id}>
-          <h3 style={{ fontSize: 13, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.09em', marginBottom: 10 }}>
-            {g.label}
+      {stacks.length > 0 && (
+        <section className="section" style={{ paddingTop: 8, paddingBottom: 8 }}>
+          <h3 style={{ fontSize: 13, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.09em', marginBottom: 4 }}>
+            Start from a stack
           </h3>
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 8 }}>
-            {g.items.map(p => {
-              const on = !!sel[p.id]
-              const sug = !on && suggested.has(p.id)
+          <p className="tiny muted" style={{ marginBottom: 11 }}>
+            Compounds that commonly appear together in this area. Loading one fills the builder — you can
+            add to it or take things out.
+          </p>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(268px,1fr))', gap: 9 }}>
+            {stacks.map(s => {
+              const loaded = s.productIds.every(id => sel[id])
               return (
-                <button key={p.id} className={cx('build-row', on && 'on', sug && 'suggested')} onClick={() => toggle(p.id)}>
-                  <span className="tickbox">{on && I.check()}</span>
-                  <Vial label={p.name} hue={hueFor(p)} size={30} />
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: 'block', fontWeight: 650, fontSize: 14 }}>{p.name}</span>
-                    {sug
-                      ? <span className="pairtag">Commonly researched with your selection</span>
-                      : <span className="tiny muted">{p.sizes[0].label} · {p.purity}</span>}
-                  </span>
-                  <span className="price" style={{ fontSize: 14 }}>{money(priceOf(p.id, sel[p.id] || p.sizes[0].label))}</span>
-                </button>
+                <div className={cx('startstack', loaded && 'is-loaded')} key={s.id}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <b style={{ fontSize: 14.5 }}>{s.name}</b>
+                    <div className="spacer" />
+                    <span className="tiny muted">{s.productIds.length} compounds</span>
+                  </div>
+                  <p className="tiny muted" style={{ marginTop: 6, lineHeight: 1.45 }}>{s.blurb}</p>
+                  <div style={{ display: 'flex', gap: 5, margin: '10px 0 11px' }}>
+                    {s.productIds.map(id => PRODUCTS[id] && (
+                      <span key={id} className="tiny" style={{
+                        padding: '3px 7px', borderRadius: 6, background: 'var(--surfaceAlt)',
+                        border: '1px solid var(--border)', whiteSpace: 'nowrap',
+                      }}>{PRODUCTS[id].name}</span>
+                    ))}
+                  </div>
+                  <button className="btn btn-sm btn-block" disabled={loaded} onClick={() => startFrom(s)}>
+                    {loaded ? 'Loaded' : 'Use as a starting point'}
+                  </button>
+                </div>
               )
             })}
           </div>
         </section>
-      ))}
-
-      <section className="section"><DisclaimerBox compact /></section>
-
-      {distinct > 0 && (
-        <div className="summary-dock">
-          <div className="dock-inner">
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-              <b style={{ fontSize: 14 }}>{distinct} {distinct === 1 ? 'compound' : 'compounds'}</b>
-              <div className="spacer" />
-              {saving > 0 && <span className="was">{money(subtotal)}</span>}
-              <span className={cx('price', bumped && 'pulse')} style={{ fontSize: 19 }}>{money(subtotal - saving)}</span>
-            </div>
-            <TierMeter distinct={distinct} pct={pct} />
-            <div style={{ display: 'flex', gap: 9, marginTop: 11, alignItems: 'center' }}>
-              {saving > 0 && <span className="saveflag">Saving {money(saving)}</span>}
-              <div className="spacer" />
-              <button className="btn btn-sm btn-ghost" onClick={() => setSel({})}>Clear</button>
-              <button className="btn btn-primary btn-sm" onClick={commit}>Add stack to cart</button>
-            </div>
-          </div>
-        </div>
       )}
+
+      <section className="section" style={{ paddingTop: 8, paddingBottom: 8 }}>
+        <h3 style={{ fontSize: 13, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.09em', marginBottom: 10 }}>
+          {showAll ? 'All compounds' : `${label} compounds`}
+        </h3>
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 8 }}>
+          {items.map(p => <Row key={p.id} p={p} />)}
+        </div>
+      </section>
+
+      {elsewhere.length > 0 && (
+        <section className="section" style={{ paddingTop: 8, paddingBottom: 8 }}>
+          <h3 style={{ fontSize: 13, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '.09em', marginBottom: 4 }}>
+            Commonly researched alongside
+          </h3>
+          <p className="tiny muted" style={{ marginBottom: 11 }}>
+            From other areas, based on what you have selected. Informational — not a recommendation.
+          </p>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 8 }}>
+            {elsewhere.map(p => <Row key={p.id} p={p} />)}
+          </div>
+        </section>
+      )}
+
+      {/* A second way out, for anyone who has scrolled past the one at the top. */}
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 0 8px' }}>
+        <button className="btn btn-sm btn-ghost" onClick={() => setGoal(null)}>
+          {I.back({ width: 16, height: 16 })} Choose a different area
+        </button>
+      </div>
+
+      <section className="section" style={{ paddingTop: 8 }}><DisclaimerBox compact /></section>
+      {dock}
     </div>
   )
 }
@@ -2116,6 +2308,10 @@ export default function App() {
   const [cart, setCart] = useState(() => LS.get('cart', { lines: [], bundles: {} }))
   const [orders, setOrders] = useState(() => LS.get('orders', []))
   const [customer, setCustomer] = useState(() => LS.get('customer', null))
+  // Builder state lives here so the nav can reset it and a part-built stack
+  // survives navigating away and back.
+  const [builderGoal, setBuilderGoal] = useState(() => LS.get('builderGoal', null))
+  const [builderSel, setBuilderSel] = useState(() => LS.get('builderSel', {}))
   const [cartOpen, setCartOpen] = useState(false)
   const [toastMsg, setToastMsg] = useState('')
   const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 760)
@@ -2130,6 +2326,8 @@ export default function App() {
   useEffect(() => { LS.set('cart', cart) }, [cart])
   useEffect(() => { LS.set('orders', orders) }, [orders])
   useEffect(() => { LS.set('customer', customer) }, [customer])
+  useEffect(() => { LS.set('builderGoal', builderGoal) }, [builderGoal])
+  useEffect(() => { LS.set('builderSel', builderSel) }, [builderSel])
   useEffect(() => { LS.set('view', view); LS.set('productId', productId); LS.set('guideSlug', guideSlug) }, [view, productId, guideSlug])
 
   const toast = useCallback(msg => {
@@ -2266,7 +2464,13 @@ export default function App() {
 
       <nav className="nav">
         {NAV.map(n => (
-          <button key={n.id} className={cx('nav-item', navActive === n.id && 'on')} onClick={() => go(n.id)}>
+          <button key={n.id} className={cx('nav-item', navActive === n.id && 'on')}
+            onClick={() => {
+              // Tapping Build always lands on the chooser. Without this it is a
+              // dead button whenever an area is already open.
+              if (n.id === 'builder') setBuilderGoal(null)
+              go(n.id)
+            }}>
             {I[n.icon]()}
             <span>{n.label}</span>
           </button>
@@ -2278,7 +2482,11 @@ export default function App() {
         {view === 'catalogue' && <Catalogue openProduct={openProduct} />}
         {view === 'product' && <ProductView id={productId} back={() => go('catalogue')} openProduct={openProduct} addLine={addLine} toast={toast} />}
         {view === 'stacks' && <StacksView addStack={addStack} openProduct={openProduct} go={go} />}
-        {view === 'builder' && <Builder addBundle={addBundle} toast={toast} openProduct={openProduct} />}
+        {view === 'builder' && (
+          <Builder addBundle={addBundle} toast={toast} openProduct={openProduct}
+            goal={builderGoal} setGoal={setBuilderGoal}
+            sel={builderSel} setSel={setBuilderSel} />
+        )}
         {view === 'checkout' && (
           <Checkout cart={cart} calc={calc} customer={customer} setCustomer={setCustomer}
             placeOrder={placeOrder} go={go} toast={toast} />

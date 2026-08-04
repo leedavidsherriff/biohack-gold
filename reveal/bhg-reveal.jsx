@@ -32,7 +32,8 @@ const BIZ = {
   // Empty this and the built-in SVG cap takes over with no other changes.
   sealImage: "./assets/seal.webp",
 
-  // Texture behind the gate button. Leave empty for flat gold.
+  // Texture behind the gate button. Flat gold is the house look — try
+  // "../media/goldleaf.webp" if a foil finish is ever wanted again.
   foilImage: "",
 
   copy: {

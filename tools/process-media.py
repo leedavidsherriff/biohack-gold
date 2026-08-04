@@ -85,6 +85,26 @@ if os.path.exists(hero):
     report.append(('hero-poster.jpg', os.path.getsize(p)))
     report.append(('hero-poster.webp', save_webp(im, os.path.join(OUT, 'hero-poster.webp'), 1920, 80)))
 
+# --- gold leaf for buttons --------------------------------------------------
+# The raw shot drifts ~70 levels corner to corner, which reads as blotchy once
+# it is stretched across a wide button. Flat-fielding (divide by a heavily
+# blurred copy of itself) evens the lighting out while keeping every crease.
+leaf_src = os.path.join(SRC, 'goldleaf.png')
+if os.path.exists(leaf_src):
+    from PIL import ImageFilter, ImageStat
+    im = Image.open(leaf_src).convert('RGB')
+    lum = im.convert('L')
+    blur = lum.filter(ImageFilter.GaussianBlur(radius=im.width / 9))
+    target = ImageStat.Stat(lum).mean[0]
+    bp, ip = blur.load(), im.load()
+    w, h = im.size
+    for y in range(h):
+        for x in range(w):
+            k = target / max(bp[x, y], 1)
+            r, g, b = ip[x, y]
+            ip[x, y] = (min(255, int(r * k)), min(255, int(g * k)), min(255, int(b * k)))
+    report.append(('goldleaf.webp', save_webp(im, os.path.join(OUT, 'goldleaf.webp'), 420, 80)))
+
 # --- the reveal page's seal: transparent, cropped ---------------------------
 # Shot on pure black, so the threshold sits much lower than the logos' — the
 # seal's own shadowed rim must survive the cut or it gains a hard bright edge.
