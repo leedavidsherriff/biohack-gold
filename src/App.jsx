@@ -1852,10 +1852,24 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
   const stacks = showAll ? BIZ.stacks : (area?.stacks || [])
   const label = showAll ? 'Everything' : (area?.label || '')
 
-  // Partners the selection pulls in from other areas — the cross-domain
-  // suggestions would otherwise be invisible once the list is filtered.
-  const elsewhere = [...suggested].map(id => PRODUCTS[id])
-    .filter(p => p && !items.some(x => x.id === p.id))
+  /* Compounds from OTHER areas that belong on screen: partners of the current
+     selection, plus anything already selected elsewhere.
+
+     Including the selected ones is the important half. `suggested` only holds
+     unselected partners, so listing it alone meant ticking a suggestion made
+     the row vanish — it left `suggested`, and being from another area it was
+     not in `items` either. The tick registered but the compound disappeared,
+     which reads as "it didn't select". Selected partners now stay put, ticked.
+
+     Ordered by the catalogue so rows never jump around as they are ticked. */
+  const elsewhereIds = new Set()
+  for (const id of ids) {
+    for (const partner of PRODUCTS[id]?.pairsWith || []) {
+      if (!items.some(p => p.id === partner)) elsewhereIds.add(partner)
+    }
+    if (!items.some(p => p.id === id)) elsewhereIds.add(id)
+  }
+  const elsewhere = BIZ.products.filter(p => elsewhereIds.has(p.id))
 
   const Row = ({ p }) => {
     const on = !!sel[p.id]
@@ -1945,7 +1959,8 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
             Commonly researched alongside
           </h3>
           <p className="tiny muted" style={{ marginBottom: 11 }}>
-            From other areas, based on what you have selected. Informational — not a recommendation.
+            From other areas, based on what you have selected — anything you tick here stays in this
+            list. Informational, not a recommendation.
           </p>
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 8 }}>
             {elsewhere.map(p => <Row key={p.id} p={p} />)}
