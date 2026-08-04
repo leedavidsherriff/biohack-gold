@@ -118,6 +118,35 @@ Subject line: `logo bhg — interlocking hexagon chain, gold on black`
 
 ---
 
+## The reveal page seal — `hello/assets/seal.webp`
+
+For Karl's private reveal page at `/hello/`. He taps it to break the sterile
+seal and open his venture. `nano_banana_pro`, 1:1, 2k, then cut to transparent
+at 640px by `tools/process-media.py` (lower threshold than the logos — shot on
+pure black, and the seal's own shadowed rim has to survive the cut or it gains
+a hard bright edge).
+
+Subject line: `seal bhg — brushed gold crimp cap, K struck`
+
+**The single letter is the one exception to the no-text rule**, and it is a
+calculated one: a lone capital is far more reliable than a word, and the same
+trick worked on Karl Gardner's wax seal. It still needs checking at full
+resolution every time — if the K ever comes back malformed, empty
+`BIZ.sealImage` and the built-in SVG cap takes over with no other changes.
+
+**Chosen (A):**
+
+> Square photograph shot from directly overhead, macro, of a pharmaceutical vial's gold aluminium flip-off crimp seal lying flat on a pure solid black background. Brushed warm gold metal, a finely knurled milled edge running all the way around the rim, a raised smooth circular centre button, and a single capital letter K deeply debossed into the centre of that button. Hard raking light from the upper left picking out the knurling and catching the edge of the debossed letter, deep shadow sitting in the recesses, shallow depth of field. Photorealistic, real brushed metal, not an illustration, not a render. Perfectly centred and square on, the seal filling most of the frame with a generous black margin all round. The only marking anywhere on the seal is that single capital letter K - absolutely no other text, no words, no numbers, no logos, no brand marks, no watermark.
+
+**Runner-up (B)** — `source-media/seal-b.png`. Aged, warmer, serif K, closer to
+a wax seal. Rejected because the serif belongs to a different client's identity
+and the clinical brushed finish suits this brand better. Swap the filename in
+`tools/process-media.py` to use it.
+
+> Square photograph shot from directly overhead, macro, of an antique gold sealed vial cap resting on a pure solid black background. Aged warm gold metal with a soft satin finish and faint fine scratches from handling, a crimped milled rim, a domed centre medallion, and one single capital letter K struck deep into the middle of the medallion like a pressed seal. Low warm directional light from the left raking hard across the metal so the struck letter throws its own shadow, deep blacks, shallow depth of field. Photorealistic macro photograph of real metal, not an illustration, not a 3D render. Perfectly centred and square on, generous black margin all round. The only marking anywhere on the cap is that single capital letter K - absolutely no other text, no words, no numbers, no logos, no brand marks, no watermark.
+
+---
+
 ## Still owed
 
 - `hero-02-coldchain.mp4` — cycle 2, frost blooming across the glass (see above).

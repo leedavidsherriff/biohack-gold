@@ -85,6 +85,17 @@ if os.path.exists(hero):
     report.append(('hero-poster.jpg', os.path.getsize(p)))
     report.append(('hero-poster.webp', save_webp(im, os.path.join(OUT, 'hero-poster.webp'), 1920, 80)))
 
+# --- the reveal page's seal: transparent, cropped ---------------------------
+# Shot on pure black, so the threshold sits much lower than the logos' — the
+# seal's own shadowed rim must survive the cut or it gains a hard bright edge.
+seal_src = os.path.join(SRC, 'seal-a.png')
+if os.path.exists(seal_src):
+    seal_out = os.path.join(ROOT, 'public', 'hello', 'assets')
+    os.makedirs(seal_out, exist_ok=True)
+    report.append(('hello/assets/seal.webp',
+                   cutout(seal_src, os.path.join(seal_out, 'seal.webp'),
+                          size=640, tol=64, floor=8)))
+
 # --- logos: transparent, cropped to the mark --------------------------------
 for src_name, out_name in (('logo-b.png', 'logo.webp'), ('logo-a.png', 'logo-chain.webp')):
     src = os.path.join(SRC, src_name)
