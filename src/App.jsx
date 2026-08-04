@@ -689,8 +689,9 @@ input, select, textarea { font:inherit; }
   font-size:10.5px; font-weight:800; display:grid; place-items:center; border:2px solid var(--bg);
 }
 .strip {
-  padding:7px 16px; font-size:10.5px; letter-spacing:.09em; text-transform:uppercase;
-  color:var(--muted); background:var(--surfaceAlt); border-bottom:1px solid var(--border); text-align:center;
+  padding:8px 16px; font-size:10.5px; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--muted); background:var(--surfaceAlt);
+  border-top:1px solid var(--border); border-bottom:1px solid var(--border); text-align:center;
 }
 .strip b { color:var(--accent); font-weight:600; }
 
@@ -1391,6 +1392,10 @@ function Landing({ go, openProduct, addStack }) {
           </div>
         </div>
       </section>
+
+      {/* Under the hero, not above it. Still the first thing after the fold,
+          and the full disclaimer sits in the footer of every view. */}
+      <div className="strip">Research use only — <b>not for human consumption</b></div>
 
       <div className="wrap">
       <section className="section" style={{ paddingTop: 22 }}>
@@ -2583,8 +2588,6 @@ export default function App() {
           {calc.count > 0 && <span className="count">{calc.count}</span>}
         </button>
       </header>
-
-      <div className="strip">Research use only — <b>not for human consumption</b></div>
 
       <nav className="nav">
         {NAV.map(n => (
