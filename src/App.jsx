@@ -18,6 +18,9 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 const BIZ = {
   name: 'BioHack Gold',
   shortName: 'BHG',
+  // The mark is a symbol only — the wordmark is real type, never generated.
+  // `logo-chain.webp` is the alternate (peptide-chain hexagons).
+  logo: './media/logo.webp',
   tagline: 'Research-grade peptides, verified to the batch.',
   established: 'Est. 2026 · London',
   email: 'info@biohackgold.com',
@@ -52,6 +55,36 @@ const BIZ = {
   ],
 
   labPartner: 'Janoshik Analytical',
+
+  /* --- Higgsfield media -------------------------------------------------
+     Everything here is optional. Each file is HEAD-probed at runtime: what
+     exists is used, what doesn't is skipped silently, so the app ships and
+     looks intentional before a single clip lands. Drop files in and reload.
+
+     Hero clips: seedance_2_0, 12s, 1080p, generate_audio true.
+     Product shots: nano_banana_pro, 2k. A SMALL set reused across the whole
+     catalogue via `shot` on each product — four images cover twenty vials.
+     Prompts live in ASSET-PROMPTS.md. Never leave a prompt unfiled.        */
+  media: {
+    poster: './media/hero-poster.jpg',
+    ambience: './media/ambience.m4a',
+    // Each inner array is one cycle. Multiple entries = chapters played straight through.
+    cycles: [
+      ['./media/hero-01-reconstitution.mp4'],
+      ['./media/hero-02-coldchain.mp4'],
+    ],
+    cyclesMobile: [
+      ['./media/m/hero-01-reconstitution.mp4'],
+      ['./media/m/hero-02-coldchain.mp4'],
+    ],
+    // The reusable product stills. Key here = `shot` on a product.
+    shots: {
+      gold: './media/products/vial-gold.webp',
+      green: './media/products/vial-green.webp',
+      ice: './media/products/vial-ice.webp',
+      violet: './media/products/vial-violet.webp',
+    },
+  },
 
   reviews: [
     { name: 'Verified buyer', text: 'Very professional and responds in a very timely manner.', stars: 5 },
@@ -615,12 +648,56 @@ input, select, textarea { font:inherit; }
 .btn[disabled] { opacity:.42; pointer-events:none; }
 .btn-ghost { background:transparent; }
 
+/* ---------- cinematic hero ---------- */
+.hero-cinema {
+  position:relative; overflow:hidden; display:flex; align-items:flex-end;
+  min-height:min(78dvh, 620px); margin-bottom:6px;
+  background:
+    radial-gradient(120% 80% at 72% 18%, color-mix(in srgb, var(--primary) 13%, transparent), transparent 62%),
+    radial-gradient(90% 70% at 20% 90%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 60%),
+    var(--bg);
+}
+.hero-media { position:absolute; inset:0; }
+.hero-still, .hero-video, .hero-freeze {
+  position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+}
+.hero-still { background-size:cover; background-position:center; }
+/* Autoplay clips start transparent and reveal on the playing event, so nothing
+   the element paints is visible in the gap before the script decides. */
+.hero-video { opacity:0; transition:opacity .6s ease; }
+.hero-video.is-playing { opacity:1; }
+.hero-media video { pointer-events:none; }
+video::-webkit-media-controls,
+video::-webkit-media-controls-start-playback-button,
+video::-webkit-media-controls-panel,
+video::-webkit-media-controls-overlay-play-button {
+  display:none !important; -webkit-appearance:none;
+}
+.hero-freeze { opacity:0; transition:opacity .12s linear; pointer-events:none; }
+.hero-freeze.is-shown { opacity:1; }
+.hero-scrim {
+  position:absolute; inset:0;
+  background:linear-gradient(180deg, rgba(8,8,9,.72) 0%, rgba(8,8,9,.30) 42%, rgba(8,8,9,.88) 100%);
+}
+.sound-chip {
+  position:absolute; right:14px; bottom:14px; z-index:3;
+  display:inline-flex; align-items:center; gap:7px; padding:8px 13px; border-radius:999px;
+  border:1px solid color-mix(in srgb, var(--text) 20%, transparent);
+  background:rgba(10,10,11,.55); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  font-size:11.5px; font-weight:650; letter-spacing:.02em; color:var(--text);
+}
+.sound-chip.is-muted { color:var(--muted); }
+.hero-copy { position:relative; z-index:2; padding-top:60px; padding-bottom:30px; width:100%; }
+@media (prefers-reduced-motion: reduce) { .hero-media video { display:none; } }
+
 /* ---------- trust ---------- */
-.hero { padding:30px 0 8px; }
-.hero h1 { font-size:clamp(29px, 7.4vw, 46px); letter-spacing:-0.035em; }
-.hero h1 em { font-style:normal; color:var(--primary); }
-.hero p.sub { color:var(--muted); margin-top:12px; font-size:15.5px; max-width:44ch; }
-.hero-cta { display:flex; gap:10px; margin-top:20px; flex-wrap:wrap; }
+.hero-copy h1 { font-size:clamp(31px, 7.6vw, 52px); letter-spacing:-0.035em; text-shadow:0 2px 24px rgba(0,0,0,.5); }
+.hero-copy h1 em { font-style:normal; color:var(--primary); }
+.hero-copy p.sub {
+  color:color-mix(in srgb, var(--text) 82%, transparent); margin-top:14px; font-size:15.5px;
+  max-width:42ch; text-shadow:0 1px 16px rgba(0,0,0,.6);
+}
+.hero-cta { display:flex; gap:10px; margin-top:22px; flex-wrap:wrap; }
 .verify-pill {
   display:inline-flex; align-items:center; gap:8px; padding:7px 12px; border-radius:999px;
   border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
@@ -919,6 +996,32 @@ const GOAL_HUE = {
 }
 const hueFor = p => GOAL_HUE[p.goals?.[0]] ?? 44
 
+/* Which of the few generated stills a product borrows. Four images dress the
+   whole catalogue; a product can override with its own `shot`. */
+const GOAL_SHOT = {
+  recovery: 'green', growth: 'gold', metabolic: 'gold', longevity: 'ice',
+  immune: 'ice', cognition: 'violet', sleep: 'violet', cosmetic: 'violet',
+}
+const shotFor = p => BIZ.media?.shots?.[p.shot || GOAL_SHOT[p.goals?.[0]] || 'gold']
+
+/* Product artwork: the generated still if it loaded, the drawn vial if not.
+   No layout shift either way — both fill the same box. */
+function ProductVisual({ product, size = 104, dim = false }) {
+  const src = shotFor(product)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => { setFailed(false) }, [src])
+  if (!src || failed) return <Vial label={product.name} hue={hueFor(product)} size={size} dim={dim} />
+  return (
+    <img
+      src={src} alt="" loading="lazy" onError={() => setFailed(true)}
+      style={{
+        width: '100%', height: '100%', objectFit: 'cover',
+        opacity: dim ? .5 : 1, display: 'block',
+      }}
+    />
+  )
+}
+
 /* ============================================================================
    Shared bits
    ========================================================================== */
@@ -927,12 +1030,22 @@ function Chip({ kind = 'gold', children }) {
   return <span className={`chip chip-${kind}`}>{children}</span>
 }
 
+/* The generated mark, falling back to the lettered tile if it's missing. */
+function BrandMark({ size = 28 }) {
+  const [failed, setFailed] = useState(false)
+  if (!BIZ.logo || failed) return <span className="brand-mark">{BIZ.shortName}</span>
+  return (
+    <img src={BIZ.logo} alt="" width={size} height={size} onError={() => setFailed(true)}
+      style={{ display: 'block', flex: 'none' }} />
+  )
+}
+
 function ProductCard({ product, onOpen }) {
   const out = product.sizes.every(s => s.stock === 'out')
   return (
     <button className="card" onClick={() => onOpen(product.id)}>
       <div className="card-media">
-        <Vial label={product.name} hue={hueFor(product)} size={104} dim={out} />
+        <ProductVisual product={product} size={104} dim={out} />
         <div className="card-tags">
           {product.badges?.includes('bestseller') && <Chip>Bestseller</Chip>}
           {product.badges?.includes('new') && <Chip>New in</Chip>}
@@ -982,26 +1095,179 @@ function DisclaimerBox({ compact }) {
    Views
    ========================================================================== */
 
+/* ---------------------------------------------------------------------------
+   Hero media — the cycle-chain player.
+
+   Rules that are not negotiable, from the house pipeline:
+   - No `controls`, ever. A clip is film in the page, not a player to operate.
+   - iOS Safari paints its own start button, so the webkit pseudo-elements are
+     killed in CSS and `playsinline` is set.
+   - Attributes alone aren't enough: if a clip never starts (Low Power Mode,
+     Safari's per-site autoplay setting), the video is REMOVED and the poster
+     stands in. A still hero is fine; a play button is not.
+   - Clips start transparent and reveal on `playing`, so nothing the element
+     paints is visible in the gap before the script decides.
+   - Reduced-motion users get the still, never the loop.
+--------------------------------------------------------------------------- */
+function HeroMedia({ onState }) {
+  const M = BIZ.media || {}
+  const videoRef = useRef(null)
+  const freezeRef = useRef(null)
+  const ambRef = useRef(null)
+  const [cycles, setCycles] = useState(null)   // null = probing · [] = none found
+  const [muted, setMuted] = useState(true)
+  const [dead, setDead] = useState(false)      // never played — poster only
+  const S = useRef({ ci: 0, clip: 0, hold: 0, everPlayed: false })
+
+  useEffect(() => {
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (reduced) { setCycles([]); return }
+    const mobile = window.matchMedia('(max-width: 768px)').matches
+    const defs = (mobile && M.cyclesMobile?.length ? M.cyclesMobile : M.cycles) || []
+    let off = false
+    const exists = url => fetch(url, { method: 'HEAD' }).then(r => r.ok).catch(() => false)
+    Promise.all(defs.map(clips =>
+      Promise.all(clips.map(exists)).then(oks => clips.filter((_, i) => oks[i]))
+    )).then(res => { if (!off) setCycles(res.filter(c => c.length)) })
+    return () => { off = true }
+  }, [])
+
+  useEffect(() => { onState?.(cycles) }, [cycles, onState])
+
+  useEffect(() => {
+    if (!cycles || !cycles.length) return
+    const v = videoRef.current
+    if (!v) return
+    const st = S.current
+
+    const play = () => { v.src = cycles[st.ci][st.clip]; v.play().catch(() => {}) }
+    const onPlaying = () => {
+      st.everPlayed = true
+      v.classList.add('is-playing')
+      freezeRef.current?.classList.remove('is-shown')
+    }
+    const freeze = () => {
+      try {
+        const c = freezeRef.current
+        c.width = v.videoWidth; c.height = v.videoHeight
+        c.getContext('2d').drawImage(v, 0, 0)
+        c.classList.add('is-shown')
+      } catch { /* not ready — skip the freeze rather than stall */ }
+    }
+    const advance = () => { st.hold = 0; st.ci = (st.ci + 1) % cycles.length; st.clip = 0; play() }
+    const onEnded = () => {
+      st.clip++
+      if (st.clip < cycles[st.ci].length) { play(); return }   // next chapter, no hold
+      freeze()
+      st.hold = performance.now() + 2500
+      setTimeout(() => { if (st.hold) advance() }, 2500)
+    }
+    const onError = () => v.dispatchEvent(new Event('ended'))
+
+    v.addEventListener('playing', onPlaying)
+    v.addEventListener('ended', onEnded)
+    v.addEventListener('error', onError)
+    play()
+
+    const deadTimer = setTimeout(() => { if (!st.everPlayed) setDead(true) }, 1800)
+    // Watchdog — browsers power-pause video in hidden tabs and a paused clip
+    // never fires `ended`, which strands the rotation permanently.
+    const watchdog = setInterval(() => {
+      if (document.hidden) return
+      if (st.hold && performance.now() > st.hold + 1000) { advance(); return }
+      if (v.paused && !v.ended && !st.hold) {
+        v.play().catch(() => {
+          if (!v.muted) { v.muted = true; setMuted(true); v.play().catch(() => {}) }
+        })
+      }
+    }, 2000)
+
+    return () => {
+      v.removeEventListener('playing', onPlaying)
+      v.removeEventListener('ended', onEnded)
+      v.removeEventListener('error', onError)
+      clearTimeout(deadTimer); clearInterval(watchdog)
+    }
+  }, [cycles])
+
+  const ramp = (el, target) => {
+    const from = el.volume, t0 = performance.now()
+    const step = now => {
+      const k = Math.min(1, (now - t0) / 300)
+      el.volume = from + (target - from) * k
+      if (k < 1) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
+  }
+
+  // Unmuting must happen synchronously inside the click or the user-activation
+  // window is gone and both elements stay silently blocked.
+  const toggleSound = () => {
+    const v = videoRef.current, a = ambRef.current
+    if (!v) return
+    const on = v.muted
+    v.muted = !on
+    setMuted(!on)
+    if (!a) return
+    if (on) { a.volume = 0; a.play().catch(() => {}); ramp(a, .35) }
+    else { ramp(a, 0); setTimeout(() => a.pause(), 300) }
+  }
+
+  const live = cycles && cycles.length > 0 && !dead
+
+  return (
+    <div className="hero-media" aria-hidden="true">
+      <div className="hero-still" style={{ backgroundImage: `url("${M.poster}")` }} />
+      {live && (
+        <>
+          <video
+            ref={videoRef} className="hero-video"
+            muted playsInline preload="auto" poster={M.poster}
+            disablePictureInPicture disableRemotePlayback
+            controlsList="nodownload noplaybackrate noremoteplayback"
+          />
+          <canvas ref={freezeRef} className="hero-freeze" />
+          {M.ambience && <audio ref={ambRef} loop preload="none" src={M.ambience} />}
+        </>
+      )}
+      <div className="hero-scrim" />
+      {live && (
+        <button type="button" className={cx('sound-chip', muted && 'is-muted')}
+          onClick={toggleSound} aria-label={muted ? 'Tap for sound' : 'Mute'}>
+          {muted
+            ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M11 5 6.5 9H3v6h3.5L11 19V5Z" /><path d="m16.5 9.5 5 5m0-5-5 5" /></svg>
+            : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M11 5 6.5 9H3v6h3.5L11 19V5Z" /><path d="M15.5 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12" /></svg>}
+          <span>{muted ? 'Tap for sound' : 'Mute'}</span>
+        </button>
+      )}
+    </div>
+  )
+}
+
 function Landing({ go, openProduct, addStack }) {
   const bestsellers = BIZ.products.filter(p => p.badges?.includes('bestseller')).slice(0, 4)
   const featured = BIZ.stacks.slice(0, 3)
   return (
-    <div className="view wrap">
+    <div className="view">
       {/* Trust first — before a single product */}
-      <section className="hero">
-        <span className="verify-pill">{I.shield({ width: 14, height: 14 })} Independently verified by {BIZ.labPartner}</span>
-        <h1>Research-grade peptides,<br /><em>verified to the batch.</em></h1>
-        <p className="sub">
-          Every batch tested by an independent laboratory, dispatched cold from London, and traceable to a
-          Certificate of Analysis you can read before you order.
-        </p>
-        <div className="hero-cta">
-          <button className="btn btn-primary" onClick={() => go('catalogue')}>Browse catalogue {I.chev({ width: 15, height: 15 })}</button>
-          <button className="btn" onClick={() => go('builder')}>{I.spark()} Build a stack</button>
+      <section className="hero-cinema">
+        <HeroMedia />
+        <div className="wrap hero-copy">
+          <span className="verify-pill">{I.shield({ width: 14, height: 14 })} Independently verified by {BIZ.labPartner}</span>
+          <h1>Research-grade peptides,<br /><em>verified to the batch.</em></h1>
+          <p className="sub">
+            Every batch tested by an independent laboratory, dispatched cold from London, and traceable to a
+            Certificate of Analysis you can read before you order.
+          </p>
+          <div className="hero-cta">
+            <button className="btn btn-primary" onClick={() => go('catalogue')}>Browse catalogue {I.chev({ width: 15, height: 15 })}</button>
+            <button className="btn" onClick={() => go('builder')}>{I.spark()} Build a stack</button>
+          </div>
         </div>
       </section>
 
-      <section className="section" style={{ paddingTop: 14 }}>
+      <div className="wrap">
+      <section className="section" style={{ paddingTop: 22 }}>
         <div className="trustgrid">
           {BIZ.trust.map(t => (
             <div className="trustcard" key={t.label}>
@@ -1079,6 +1345,7 @@ function Landing({ go, openProduct, addStack }) {
       </section>
 
       <section className="section"><DisclaimerBox /></section>
+      </div>
     </div>
   )
 }
@@ -1169,7 +1436,7 @@ function ProductView({ id, back, openProduct, addLine, toast }) {
 
       <div className="two-col">
         <div>
-          <div className="pdp-media"><Vial label={p.name} hue={hueFor(p)} size={190} /></div>
+          <div className="pdp-media"><ProductVisual product={p} size={190} /></div>
         </div>
 
         <div>
@@ -1984,7 +2251,7 @@ export default function App() {
 
       <header className="topbar">
         <button className="brand" onClick={() => go('landing')}>
-          <span className="brand-mark">{BIZ.shortName}</span>
+          <BrandMark />
           {BIZ.name}
         </button>
         <div className="spacer" />
@@ -2023,7 +2290,7 @@ export default function App() {
 
       <footer className="wrap" style={{ padding: '30px 16px 40px', borderTop: '1px solid var(--border)', marginTop: 20 }}>
         <div className="brand" style={{ marginBottom: 10 }}>
-          <span className="brand-mark">{BIZ.shortName}</span>{BIZ.name}
+          <BrandMark />{BIZ.name}
         </div>
         <p className="tiny muted">{BIZ.established} · {BIZ.email}</p>
         <p className="tiny muted" style={{ marginTop: 4 }}>Batches independently verified by {BIZ.labPartner}.</p>
