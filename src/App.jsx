@@ -111,6 +111,22 @@ const BIZ = {
     'chain-of-custody reasons. Cold-chain items are dispatched with temperature control; report any transit issue ' +
     'within 24 hours of delivery.',
 
+  /* --- Where a placed order actually goes ---------------------------------
+     A static site has no server, so an order has to leave the browser somehow.
+
+     `endpoint`: any URL that accepts a JSON POST — a Formspree / Web3Forms
+     form endpoint, a Zapier or Make catch hook, or your own function. Set it
+     and orders are delivered automatically the moment they are placed.
+
+     Until it IS set, the app does NOT pretend an order has been sent. It shows
+     the customer a send button instead, which opens their mail app with the
+     whole order filled in, addressed to `notifyEmail` and copied to
+     themselves. Nothing is ever silently lost.                              */
+  orders: {
+    endpoint: '',                          // ← set this and delivery is automatic
+    notifyEmail: 'orders@biohackgold.com', // PLACEHOLDER — real inbox before launch
+  },
+
   /* --- Payments: Pay by Bank only. No card processing anywhere in the app - */
   bank: {
     method: 'Pay by Bank (UK bank transfer)',
@@ -525,6 +541,63 @@ function uid() {
   return Math.random().toString(36).slice(2, 9)
 }
 
+/* ---- getting a placed order out of the browser ---------------------------- */
+
+function orderSummaryText(order) {
+  const lines = order.lines.map(l => `${l.qty} x ${l.name} ${l.size} — ${money(l.price * l.qty)}`)
+  return [
+    `Order reference: ${order.ref}`,
+    `Placed: ${new Date(order.createdAt).toLocaleString('en-GB')}`,
+    '',
+    ...lines,
+    order.discount > 0 ? `Stack discount: −${money(order.discount)}` : '',
+    `Total to pay: ${money(order.total)}`,
+    '',
+    `Name: ${order.customer.name}`,
+    `Email: ${order.customer.email}`,
+    order.customer.phone ? `Phone: ${order.customer.phone}` : '',
+    `Address: ${order.customer.line1}, ${order.customer.city}, ${order.customer.postcode}`,
+    '',
+    `Payment: UK bank transfer to ${BIZ.bank.accountName}, quoting ${order.ref}.`,
+    'Confirmed 18+ and for in-vitro laboratory research use only.',
+  ].filter(Boolean).join('\n')
+}
+
+/* Addressed to the shop and copied to the customer, so one tap both places the
+   order and leaves them a record of it. */
+function orderMailHref(order) {
+  const to = BIZ.orders?.notifyEmail || BIZ.email
+  const cc = order.customer?.email || ''
+  const subject = `Order ${order.ref} — ${money(order.total)}`
+  return `mailto:${to}?${cc ? `cc=${encodeURIComponent(cc)}&` : ''}` +
+    `subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(orderSummaryText(order))}`
+}
+
+async function deliverOrder(order) {
+  const ep = BIZ.orders?.endpoint
+  if (!ep) return false
+  try {
+    const res = await fetch(ep, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        reference: order.ref,
+        placed: new Date(order.createdAt).toISOString(),
+        status: order.status,
+        total: order.total,
+        subtotal: order.subtotal,
+        discount: order.discount,
+        customer: order.customer,
+        items: order.lines.map(l => ({ name: l.name, size: l.size, qty: l.qty, price: l.price })),
+        summary: orderSummaryText(order),
+      }),
+    })
+    return res.ok
+  } catch {
+    return false   // offline, blocked, or a bad endpoint — the fallback covers it
+  }
+}
+
 /* --- Cart maths -------------------------------------------------------------
    Lines carry an optional bundleId. Loose lines earn the automatic tier
    discount on distinct products. Bundle lines keep their fixed stack discount
@@ -637,6 +710,7 @@ input, select, textarea { font:inherit; }
 .btn {
   display:inline-flex; align-items:center; justify-content:center; gap:8px;
   padding:13px 18px; border-radius:13px; font-weight:650; font-size:14.5px;
+  text-decoration:none;   /* some buttons are anchors (mailto) */
   border:1px solid var(--border); background:var(--surfaceAlt);
   transition:transform .12s cubic-bezier(.3,1.4,.5,1), filter .15s, opacity .15s;
   -webkit-tap-highlight-color:transparent;
@@ -1854,8 +1928,10 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
   )
 }
 
-function Checkout({ cart, calc, customer, setCustomer, placeOrder, go, toast }) {
+function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified, go, toast }) {
   const [step, setStep] = useState(0)
+  const [sending, setSending] = useState(false)
+  const [sent, setSent] = useState(false)
   const [form, setForm] = useState(() => ({
     name: '', email: '', phone: '', line1: '', city: '', postcode: '', ...customer,
   }))
@@ -1886,6 +1962,15 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, go, toast }) 
     const o = placeOrder(form)
     setOrder(o)
     setStep(2)
+    // Try to deliver it. If there is no endpoint configured, or the POST fails,
+    // `sent` stays false and the screen asks the customer to send it instead —
+    // it must never claim to have done something it hasn't.
+    setSending(true)
+    deliverOrder(o).then(ok => {
+      setSending(false)
+      setSent(ok)
+      if (ok) markNotified(o.ref)
+    })
   }
 
   const copy = async (key, value) => {
@@ -1957,7 +2042,7 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, go, toast }) 
             {errors.name && <div className="err">{errors.name}</div>}
           </div>
           <div className="field">
-            <label>Email — your order reference is sent here</label>
+            <label>Email address</label>
             <input className={cx('input', errors.email && 'bad')} value={form.email} onChange={e => set('email', e.target.value)} inputMode="email" autoComplete="email" />
             {errors.email && <div className="err">{errors.email}</div>}
           </div>
@@ -2014,12 +2099,34 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, go, toast }) 
             <div style={{ width: 46, height: 46, borderRadius: '50%', background: 'var(--primary)', color: '#14120C', display: 'grid', placeItems: 'center', margin: '4px auto 12px' }}>
               {I.check({ width: 22, height: 22 })}
             </div>
-            <h3 style={{ fontSize: 18 }}>Order {order.ref} created</h3>
+            <h3 style={{ fontSize: 18 }}>
+              {sending ? `Placing order ${order.ref}…` : sent ? `Order ${order.ref} is with us` : `Order ${order.ref} created`}
+            </h3>
             <p className="small muted" style={{ marginTop: 8 }}>
               Send {money(order.total)} using the details below. Quote the reference exactly — it is how your payment
               is matched to your order automatically.
             </p>
           </div>
+
+          {/* No endpoint configured, or the POST failed: the order has not left
+              the browser, so say so and give them a one-tap way to send it. */}
+          {!sending && !sent && (
+            <div className="panel" style={{ marginTop: 12, borderColor: 'color-mix(in srgb, var(--primary) 40%, transparent)' }}>
+              <div className="eyebrow" style={{ marginBottom: 8 }}>One more step</div>
+              <p className="small" style={{ lineHeight: 1.6 }}>
+                Your order hasn’t reached us yet. Tap below to send it — it opens your email app with everything
+                filled in, addressed to us and copied to you.
+              </p>
+              <a className="btn btn-primary btn-block" style={{ marginTop: 13 }}
+                href={orderMailHref(order)}
+                onClick={() => { markNotified(order.ref); setSent(true) }}>
+                Send my order
+              </a>
+              <p className="tiny muted" style={{ marginTop: 11 }}>
+                If nothing opens, email <b>{BIZ.orders.notifyEmail}</b> quoting <b className="mono">{order.ref}</b>.
+              </p>
+            </div>
+          )}
 
           <div className="panel" style={{ marginTop: 12 }}>
             <div className="bankrow">
@@ -2064,7 +2171,8 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, go, toast }) 
             View order status
           </button>
           <p className="tiny muted" style={{ marginTop: 14, textAlign: 'center' }}>
-            A copy of these details has been sent to {order.customer.email}.
+            Keep your reference — <b className="mono" style={{ color: 'var(--primary)' }}>{order.ref}</b>. It is also
+            saved under Account on this device.
           </p>
         </>
       )}
@@ -2072,7 +2180,7 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, go, toast }) 
   )
 }
 
-function Account({ orders, customer, reorder, go, toast }) {
+function Account({ orders, customer, reorder, markNotified, go, toast }) {
   const [open, setOpen] = useState(null)
   const statusLabel = { awaiting_payment: 'Awaiting payment', paid: 'Payment received', fulfilled: 'Dispatched', cancelled: 'Cancelled' }
   const statusClass = { awaiting_payment: 'awaiting', paid: 'paid', fulfilled: 'fulfilled', cancelled: 'cancelled' }
@@ -2124,6 +2232,17 @@ function Account({ orders, customer, reorder, go, toast }) {
                       <span style={{ color: 'var(--primary)' }}>−{money(o.discount)}</span></div>
                   )}
                   <div className="rowline"><b>Total</b><b>{money(o.total)}</b></div>
+
+                  {/* Never lose an order that failed to leave the browser. */}
+                  {!o.notified && (
+                    <div style={{ marginTop: 12, padding: 12, borderRadius: 11, background: 'var(--surfaceAlt)', border: '1px solid color-mix(in srgb, var(--primary) 34%, transparent)' }}>
+                      <div className="tiny" style={{ color: 'var(--primary)', fontWeight: 700 }}>Not sent to us yet</div>
+                      <a className="btn btn-sm btn-block" style={{ marginTop: 9 }}
+                        href={orderMailHref(o)} onClick={() => markNotified(o.ref)}>
+                        Send this order
+                      </a>
+                    </div>
+                  )}
 
                   {o.status === 'awaiting_payment' && (
                     <div style={{ marginTop: 12, padding: 12, borderRadius: 11, background: 'var(--surfaceAlt)' }}>
@@ -2393,6 +2512,7 @@ export default function App() {
       ref: makeRef(),
       createdAt: Date.now(),
       status: 'awaiting_payment',       // → paid → fulfilled, reconciled by reference
+      notified: false,                  // has the order actually left the browser?
       paymentDeclared: false,
       customer: form,
       lines: cart.lines.map(l => ({
@@ -2412,6 +2532,10 @@ export default function App() {
     setCart({ lines: [], bundles: {} })
     return order
   }, [cart])
+
+  const markNotified = useCallback(ref => {
+    setOrders(list => list.map(o => (o.ref === ref ? { ...o, notified: true } : o)))
+  }, [])
 
   const reorder = useCallback(order => {
     const bundleMap = {}
@@ -2489,9 +2613,12 @@ export default function App() {
         )}
         {view === 'checkout' && (
           <Checkout cart={cart} calc={calc} customer={customer} setCustomer={setCustomer}
-            placeOrder={placeOrder} go={go} toast={toast} />
+            placeOrder={placeOrder} markNotified={markNotified} go={go} toast={toast} />
         )}
-        {view === 'account' && <Account orders={orders} customer={customer} reorder={reorder} go={go} toast={toast} />}
+        {view === 'account' && (
+          <Account orders={orders} customer={customer} reorder={reorder}
+            markNotified={markNotified} go={go} toast={toast} />
+        )}
         {view === 'education' && <Education go={go} />}
         {view === 'guide' && <Guide slug={guideSlug} back={() => go('education')} />}
       </main>
