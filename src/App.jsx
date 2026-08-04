@@ -646,7 +646,8 @@ const styles = (c) => `
   --bg:${c.bg}; --surface:${c.surface}; --surfaceAlt:${c.surfaceAlt}; --border:${c.border};
   --text:${c.text}; --muted:${c.textMuted}; --primary:${c.primary}; --primaryDim:${c.primaryDim};
   --accent:${c.accent}; --good:${c.good};
-  --nav: 62px;
+  --navh: 58px;                 /* the pill itself */
+  --nav: 80px;                  /* pill + the gap it floats above */
 }
 body { margin:0; }
 .app {
@@ -663,15 +664,24 @@ a { color:inherit; }
 input, select, textarea { font:inherit; }
 
 /* ---------- chrome ---------- */
-.topbar {
-  position:sticky; top:0; z-index:40; display:flex; align-items:center; gap:12px;
-  padding:12px 16px calc(12px + env(safe-area-inset-top));
-  padding-top: max(12px, env(safe-area-inset-top));
-  background:color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter:blur(14px) saturate(1.4); -webkit-backdrop-filter:blur(14px) saturate(1.4);
-  border-bottom:1px solid var(--border);
+/* No header bar: the logo and the icons float over whatever is underneath, so
+   the hero runs full-bleed to the very top. Each control carries its own glass
+   so it stays legible over film, over photography and over plain background. */
+.floatbar {
+  position:fixed; top:0; left:0; right:0; z-index:40;
+  display:flex; align-items:center; gap:10px;
+  padding:12px 14px; padding-top:max(12px, env(safe-area-inset-top));
+  pointer-events:none;   /* the gaps must not swallow taps on what's beneath */
 }
-.brand { display:flex; align-items:center; gap:9px; font-weight:650; letter-spacing:-0.03em; font-size:16.5px; }
+.floatbar > * { pointer-events:auto; }
+.brand {
+  display:flex; align-items:center; gap:9px; font-weight:650;
+  letter-spacing:-0.03em; font-size:16.5px;
+  padding:6px 13px 6px 7px; border-radius:999px;
+  background:rgba(10,10,11,.42); border:1px solid rgba(243,240,233,.10);
+  backdrop-filter:blur(14px) saturate(1.4); -webkit-backdrop-filter:blur(14px) saturate(1.4);
+  text-shadow:0 1px 8px rgba(0,0,0,.5);
+}
 .brand-mark {
   width:26px; height:26px; border-radius:7px; display:grid; place-items:center; flex:none;
   background:linear-gradient(150deg, var(--primary), var(--primaryDim));
@@ -679,8 +689,10 @@ input, select, textarea { font:inherit; }
 }
 .spacer { flex:1; }
 .iconbtn {
-  position:relative; width:38px; height:38px; border-radius:11px; display:grid; place-items:center;
-  border:1px solid var(--border); background:var(--surface); transition:transform .12s, background .16s;
+  position:relative; width:38px; height:38px; border-radius:999px; display:grid; place-items:center;
+  border:1px solid rgba(243,240,233,.10); background:rgba(10,10,11,.42);
+  backdrop-filter:blur(14px) saturate(1.4); -webkit-backdrop-filter:blur(14px) saturate(1.4);
+  transition:transform .12s, background .16s;
 }
 .iconbtn:active { transform:scale(.93); }
 .iconbtn .count {
@@ -695,6 +707,7 @@ input, select, textarea { font:inherit; }
 }
 .strip b { color:var(--accent); font-weight:600; }
 
+.below-floatbar { padding-top:calc(58px + env(safe-area-inset-top)); }
 .wrap { max-width:1180px; margin:0 auto; padding:0 16px; }
 .view { animation:viewIn .26s cubic-bezier(.22,.8,.3,1); }
 @keyframes viewIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
@@ -913,11 +926,13 @@ video::-webkit-media-controls-overlay-play-button {
   background:color-mix(in srgb, var(--primary) 7%, var(--surface));
 }
 
+/* Floats above the nav pill and matches its language. */
 .summary-dock {
-  position:fixed; left:0; right:0; bottom:calc(var(--nav) + env(safe-area-inset-bottom)); z-index:35;
-  background:color-mix(in srgb, var(--surface) 94%, transparent);
-  backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
-  border-top:1px solid var(--border); padding:12px 16px calc(12px);
+  position:fixed; left:12px; right:12px; bottom:calc(var(--nav) + env(safe-area-inset-bottom)); z-index:35;
+  background:rgba(10,10,11,.72); border:1px solid rgba(243,240,233,.10); border-radius:18px;
+  backdrop-filter:blur(20px) saturate(1.5); -webkit-backdrop-filter:blur(20px) saturate(1.5);
+  box-shadow:0 12px 34px rgba(0,0,0,.5);
+  padding:13px 15px;
   animation:dockIn .3s cubic-bezier(.22,.9,.3,1);
 }
 @keyframes dockIn { from { transform:translateY(100%); } to { transform:none; } }
@@ -957,19 +972,33 @@ video::-webkit-media-controls-overlay-play-button {
 .qty span { min-width:22px; text-align:center; font-size:13px; font-weight:650; }
 
 /* ---------- nav ---------- */
+/* Each destination floats on its own, like the controls at the top. Only the
+   active one carries its label, which keeps five of them comfortable on a
+   narrow phone and makes where-you-are unmistakable. */
 .nav {
-  position:fixed; left:0; right:0; bottom:0; z-index:50; display:grid; grid-template-columns:repeat(5,1fr);
-  background:color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter:blur(18px) saturate(1.5); -webkit-backdrop-filter:blur(18px) saturate(1.5);
-  border-top:1px solid var(--border); padding-bottom:env(safe-area-inset-bottom);
+  position:fixed; left:0; right:0; bottom:calc(10px + env(safe-area-inset-bottom));
+  z-index:50; display:flex; justify-content:center; align-items:center; gap:7px;
+  padding:0 12px; background:none; border:0; box-shadow:none;
 }
 .nav-item {
-  height:var(--nav); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
-  color:var(--muted); font-size:10px; font-weight:600; letter-spacing:.01em; transition:color .16s;
+  height:var(--navh); min-width:var(--navh); padding:0 15px; border-radius:999px;
+  display:flex; flex-direction:row; align-items:center; justify-content:center; gap:8px;
+  color:var(--muted); font-size:12px; font-weight:650; letter-spacing:-0.01em;
+  background:rgba(10,10,11,.58); border:1px solid rgba(243,240,233,.10);
+  backdrop-filter:blur(18px) saturate(1.5); -webkit-backdrop-filter:blur(18px) saturate(1.5);
+  box-shadow:0 8px 22px rgba(0,0,0,.45);
+  transition:color .16s, background .2s, border-color .2s, transform .12s;
 }
-.nav-item.on { color:var(--primary); }
+.nav-item span { display:none; }
+.nav-item:active { transform:scale(.94); }
+.nav-item.on span { display:inline; }
+.nav-item.on {
+  color:var(--primary);
+  background:rgba(10,10,11,.76);
+  border-color:color-mix(in srgb, var(--primary) 42%, transparent);
+}
 .nav-item svg { transition:transform .2s cubic-bezier(.3,1.5,.5,1); }
-.nav-item.on svg { transform:translateY(-1px) scale(1.06); }
+.nav-item.on svg { transform:scale(1.04); }
 
 /* ---------- forms ---------- */
 .field { margin-bottom:12px; }
@@ -1031,13 +1060,22 @@ video::-webkit-media-controls-overlay-play-button {
 }
 @media (min-width:1024px) {
   .grid { grid-template-columns:repeat(4,1fr); }
-  .app { --nav: 0px; padding-bottom:40px; }
+  .app { --nav: 0px; --navh: auto; padding-bottom:40px; }
+  /* Floating on desktop too — no background, no border, so it reads as
+     controls over the page rather than a chrome bar across the top. */
   .nav {
-    position:sticky; top:0; bottom:auto; grid-template-columns:none; display:flex; justify-content:center;
-    gap:4px; border-top:none; border-bottom:1px solid var(--border); z-index:39; padding:6px 0;
+    position:fixed; top:0; bottom:auto; grid-template-columns:none; display:flex; justify-content:center;
+    gap:4px; background:transparent; backdrop-filter:none; -webkit-backdrop-filter:none;
+    border-top:none; border-bottom:none; z-index:41; padding:14px 0;
   }
-  .nav-item { height:auto; flex-direction:row; gap:7px; padding:9px 15px; border-radius:11px; font-size:13px; }
-  .nav-item.on { background:color-mix(in srgb, var(--primary) 11%, transparent); }
+  .nav-item {
+    height:auto; flex-direction:row; gap:7px; padding:9px 15px; border-radius:999px; font-size:13px;
+    text-shadow:0 1px 8px rgba(0,0,0,.55);
+  }
+  .nav-item.on {
+    background:rgba(10,10,11,.42); border:1px solid rgba(243,240,233,.10);
+    backdrop-filter:blur(14px) saturate(1.4); -webkit-backdrop-filter:blur(14px) saturate(1.4);
+  }
   .summary-dock { bottom:0; }
   .topbar { position:relative; }
 }
@@ -1475,7 +1513,6 @@ function Landing({ go, openProduct, addStack }) {
         </div>
       </section>
 
-      <section className="section"><DisclaimerBox /></section>
       </div>
     </div>
   )
@@ -1546,7 +1583,6 @@ function Catalogue({ openProduct }) {
         {list.map(p => <ProductCard key={p.id} product={p} onOpen={openProduct} />)}
       </div>
       {list.length === 0 && <div className="empty">Nothing in this research area yet.</div>}
-      <section className="section"><DisclaimerBox compact /></section>
     </div>
   )
 }
@@ -1653,7 +1689,6 @@ function ProductView({ id, back, openProduct, addLine, toast }) {
         </section>
       )}
 
-      <section className="section" style={{ paddingTop: 0 }}><DisclaimerBox /></section>
     </div>
   )
 }
@@ -1675,7 +1710,6 @@ function StacksView({ addStack, openProduct, go }) {
       <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', paddingBottom: 20 }}>
         {BIZ.stacks.map(s => <StackCard key={s.id} stack={s} onAdd={addStack} onOpen={openProduct} />)}
       </div>
-      <section className="section"><DisclaimerBox compact /></section>
     </div>
   )
 }
@@ -1806,8 +1840,7 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
           </button>
         </div>
 
-        <section className="section"><DisclaimerBox compact /></section>
-        {dock}
+          {dock}
       </div>
     )
   }
@@ -1927,7 +1960,6 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
         </button>
       </div>
 
-      <section className="section" style={{ paddingTop: 8 }}><DisclaimerBox compact /></section>
       {dock}
     </div>
   )
@@ -2035,7 +2067,6 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
             <div className="rowline"><b>Total</b><b className="price">{money(calc.total)}</b></div>
           </div>
           <button className="btn btn-primary btn-block" style={{ marginTop: 16 }} onClick={() => setStep(1)}>Continue</button>
-          <div style={{ marginTop: 18 }}><DisclaimerBox compact /></div>
         </>
       )}
 
@@ -2274,7 +2305,6 @@ function Account({ orders, customer, reorder, markNotified, go, toast }) {
         <h3 style={{ fontSize: 16, marginBottom: 10 }}>Returns</h3>
         <div className="panel"><p className="small muted" style={{ lineHeight: 1.6 }}>{BIZ.returnsText}</p></div>
       </section>
-      <section className="section" style={{ paddingTop: 0 }}><DisclaimerBox /></section>
     </div>
   )
 }
@@ -2303,7 +2333,6 @@ function Education({ go }) {
           </button>
         ))}
       </div>
-      <section className="section"><DisclaimerBox /></section>
     </div>
   )
 }
@@ -2329,7 +2358,6 @@ function Guide({ slug, back }) {
           </div>
         ))}
       </div>
-      <section className="section" style={{ paddingTop: 0 }}><DisclaimerBox /></section>
     </div>
   )
 }
@@ -2576,7 +2604,7 @@ export default function App() {
     <div className="app">
       <style dangerouslySetInnerHTML={{ __html: styles(BIZ.palette) }} />
 
-      <header className="topbar">
+      <header className="floatbar">
         <button className="brand" onClick={() => go('landing')}>
           <BrandMark />
           {BIZ.name}
@@ -2604,7 +2632,10 @@ export default function App() {
         ))}
       </nav>
 
-      <main key={view + (productId || '') + (guideSlug || '')}>
+      {/* The landing hero sits behind the floating controls on purpose; every
+          other view has to start below them. */}
+      <main key={view + (productId || '') + (guideSlug || '')}
+        className={cx(view !== 'landing' && 'below-floatbar')}>
         {view === 'landing' && <Landing go={go} openProduct={openProduct} addStack={addStack} />}
         {view === 'catalogue' && <Catalogue openProduct={openProduct} />}
         {view === 'product' && <ProductView id={productId} back={() => go('catalogue')} openProduct={openProduct} addLine={addLine} toast={toast} />}
