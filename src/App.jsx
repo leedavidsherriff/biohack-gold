@@ -36,6 +36,7 @@ const BIZ = {
     primaryDim: '#8A6E31',
     accent: '#79C2D4',       // lab ice — verification, purity, cold chain
     good: '#6FCF97',
+    info: '#6AA8E0',   // 'paid' state — deliberately blue, not the ice accent
     warn: '#E2B04A',
   },
 
@@ -83,6 +84,16 @@ const BIZ = {
       green: './media/products/vial-green.webp',
       ice: './media/products/vial-ice.webp',
       violet: './media/products/vial-violet.webp',
+    },
+    // The same four vials, reconstituted — powder dissolved into clear
+    // solution, everything else identical. Powers tap-to-reconstitute on a
+    // product page. If a file is missing the interaction disables itself
+    // rather than leaving a control that does nothing.
+    shotsWet: {
+      gold: './media/products/vial-gold-wet.webp',
+      green: './media/products/vial-green-wet.webp',
+      ice: './media/products/vial-ice-wet.webp',
+      violet: './media/products/vial-violet-wet.webp',
     },
   },
 
@@ -697,7 +708,7 @@ const styles = (c) => `
 :root {
   --bg:${c.bg}; --surface:${c.surface}; --surfaceAlt:${c.surfaceAlt}; --border:${c.border};
   --text:${c.text}; --muted:${c.textMuted}; --primary:${c.primary}; --primaryDim:${c.primaryDim};
-  --accent:${c.accent}; --good:${c.good};
+  --accent:${c.accent}; --good:${c.good}; --info:${c.info};
   --navh: 58px;                 /* the pill itself */
   --nav: 80px;                  /* pill + the gap it floats above */
 }
@@ -747,6 +758,25 @@ input, select, textarea { font:inherit; }
   transition:transform .12s, background .16s;
 }
 .iconbtn:active { transform:scale(.93); }
+/* A vial drops in and the cart takes the weight — one physical event, no
+   flying clones or screen effects. */
+.iconbtn.is-receiving { animation:cart-receive .64s cubic-bezier(.3,1.35,.4,1); }
+@keyframes cart-receive {
+  0% { transform:none; } 32% { transform:translateY(3px) scale(.94); } 100% { transform:none; }
+}
+.iconbtn.is-receiving::before {
+  content:''; position:absolute; left:50%; top:0; width:8px; height:13px; border-radius:2px;
+  background:linear-gradient(180deg, var(--primary), var(--primaryDim));
+  box-shadow:0 0 8px color-mix(in srgb, var(--primary) 55%, transparent);
+  animation:vial-drop .40s cubic-bezier(.55,0,.8,1) forwards;
+}
+@keyframes vial-drop {
+  0%   { opacity:0; transform:translate(-50%,-26px) scale(.9); }
+  30%  { opacity:1; }
+  100% { opacity:0; transform:translate(-50%,4px) scale(.62); }
+}
+.iconbtn.is-receiving .count { animation:badge-pop .46s cubic-bezier(.3,1.5,.5,1); }
+@keyframes badge-pop { 0% { transform:scale(1); } 42% { transform:scale(1.34); } 100% { transform:scale(1); } }
 .iconbtn .count {
   position:absolute; top:-5px; right:-5px; min-width:18px; height:18px; padding:0 5px;
   border-radius:9px; background:var(--primary); color:#14120C;
@@ -883,6 +913,13 @@ video::-webkit-media-controls-overlay-play-button {
 .chip-purity { background:color-mix(in srgb, var(--accent) 13%, transparent); color:var(--accent); }
 .chip-gold { background:color-mix(in srgb, var(--primary) 14%, transparent); color:var(--primary); }
 .chip-out { background:#2A2A2E; color:var(--muted); }
+/* A tier that has just been earned lands like a stamp rather than fading in. */
+.chip-stamp { animation:chip-stamp .58s cubic-bezier(.3,1.3,.4,1); }
+@keyframes chip-stamp {
+  0%   { transform:scale(1.4); filter:brightness(1.75); }
+  55%  { transform:scale(.97); }
+  100% { transform:none; filter:none; }
+}
 .card-tags { position:absolute; top:9px; left:9px; display:flex; gap:5px; flex-wrap:wrap; }
 
 /* ---------- filters ---------- */
@@ -1041,6 +1078,29 @@ video::-webkit-media-controls-overlay-play-button {
 .qty { display:flex; align-items:center; gap:2px; border:1px solid var(--border); border-radius:9px; overflow:hidden; }
 .qty button { width:28px; height:28px; display:grid; place-items:center; font-size:16px; color:var(--muted); }
 .qty span { min-width:22px; text-align:center; font-size:13px; font-weight:650; }
+.qty button:disabled { opacity:.35; pointer-events:none; }
+.qty-lg { border-radius:13px; }
+.qty-lg button { width:46px; height:50px; font-size:20px; }
+.qty-lg span { min-width:34px; font-size:16px; }
+
+/* Tap to reconstitute: two stills in register, cross-faded. */
+.recon { position:relative; display:block; width:100%; height:100%; padding:0; border-radius:18px; overflow:hidden; }
+.recon img {
+  position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block;
+  transition:opacity 1.05s cubic-bezier(.4,0,.25,1);
+}
+.recon .recon-wet { opacity:0; }
+.recon.is-wet .recon-wet { opacity:1; }
+.recon.is-wet .recon-dry { opacity:0; }
+.recon-hint {
+  position:absolute; left:50%; bottom:12px; transform:translateX(-50%);
+  padding:6px 12px; border-radius:999px; white-space:nowrap;
+  background:rgba(10,10,11,.62); border:1px solid rgba(243,240,233,.12);
+  backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  font-size:11px; font-weight:650; letter-spacing:.04em; color:var(--text);
+  transition:opacity .3s;
+}
+.recon.is-wet .recon-hint { color:var(--accent); }
 
 /* ---------- nav ---------- */
 /* Each destination floats on its own, like the controls at the top. Only the
@@ -1114,7 +1174,7 @@ video::-webkit-media-controls-overlay-play-button {
 
 .status { display:inline-flex; align-items:center; gap:5px; padding:4px 9px; border-radius:7px; font-size:11px; font-weight:700; letter-spacing:.03em; }
 .status.awaiting { background:color-mix(in srgb, var(--primary) 15%, transparent); color:var(--primary); }
-.status.paid { background:color-mix(in srgb, var(--accent) 15%, transparent); color:var(--accent); }
+.status.paid { background:color-mix(in srgb, var(--info) 15%, transparent); color:var(--info); }
 .status.fulfilled { background:color-mix(in srgb, var(--good) 15%, transparent); color:var(--good); }
 .status.cancelled { background:#2A2A2E; color:var(--muted); }
 
@@ -1253,7 +1313,9 @@ const GOAL_CODE = {
   cognition: 'COGNITION', cosmetic: 'COSMETIC', sleep: 'SLEEP',
   immune: 'IMMUNE', longevity: 'LONGEVITY',
 }
-const shotFor = p => BIZ.media?.shots?.[p.shot || GOAL_SHOT[p.goals?.[0]] || 'gold']
+const shotKeyFor = p => p.shot || GOAL_SHOT[p.goals?.[0]] || 'gold'
+const shotFor = p => BIZ.media?.shots?.[shotKeyFor(p)]
+const wetShotFor = p => BIZ.media?.shotsWet?.[shotKeyFor(p)]
 
 /* Product artwork: the generated still if it loaded, the drawn vial if not.
    No layout shift either way — both fill the same box. */
@@ -1270,6 +1332,33 @@ function ProductVisual({ product, size = 104, dim = false }) {
         opacity: dim ? .5 : 1, display: 'block',
       }}
     />
+  )
+}
+
+/* The brand's whole story, made into something you do rather than watch: tap
+   the vial and the powder goes into solution. Two stills in perfect register,
+   cross-faded — no trickery, and it disables itself if the wet still is
+   missing rather than leaving a control that does nothing. */
+function ReconstituteVisual({ product }) {
+  const dry = shotFor(product)
+  const wet = wetShotFor(product)
+  const [on, setOn] = useState(false)
+  const [ready, setReady] = useState(false)
+  const [broken, setBroken] = useState(false)
+
+  useEffect(() => { setOn(false); setReady(false); setBroken(false) }, [product.id])
+
+  if (!dry || !wet || broken) return <ProductVisual product={product} size={190} />
+
+  return (
+    <button className={cx('recon', on && 'is-wet')} onClick={() => ready && setOn(v => !v)}
+      aria-pressed={on} aria-label={on ? `${product.name} reconstituted — tap to reset` : `Reconstitute ${product.name}`}>
+      <img className="recon-dry" src={dry} alt="" />
+      <img className="recon-wet" src={wet} alt="" onLoad={() => setReady(true)} onError={() => setBroken(true)} />
+      {ready && (
+        <span className="recon-hint">{on ? 'In solution · tap to reset' : 'Tap to reconstitute'}</span>
+      )}
+    </button>
   )
 }
 
@@ -1676,7 +1765,8 @@ function Catalogue({ openProduct }) {
 function ProductView({ id, back, backLabel = 'Back', openProduct, addLine, toast }) {
   const p = PRODUCTS[id]
   const [size, setSize] = useState(p?.sizes[0]?.label)
-  useEffect(() => { setSize(PRODUCTS[id]?.sizes[0]?.label) }, [id])
+  const [qty, setQty] = useState(1)
+  useEffect(() => { setSize(PRODUCTS[id]?.sizes[0]?.label); setQty(1) }, [id])
   if (!p) return <div className="wrap empty">Product not found.</div>
   const sel = p.sizes.find(s => s.label === size) || p.sizes[0]
   const pairs = (p.pairsWith || []).map(x => PRODUCTS[x]).filter(Boolean)
@@ -1689,7 +1779,7 @@ function ProductView({ id, back, backLabel = 'Back', openProduct, addLine, toast
 
       <div className="two-col">
         <div>
-          <div className="pdp-media"><ProductVisual product={p} size={190} /></div>
+          <div className="pdp-media"><ReconstituteVisual product={p} /></div>
         </div>
 
         <div>
@@ -1711,13 +1801,25 @@ function ProductView({ id, back, backLabel = 'Back', openProduct, addLine, toast
             ))}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 8px' }}>
-            <span className="price" style={{ fontSize: 26 }}>{money(sel.price)}</span>
-            <div className="spacer" />
-            <button className="btn btn-primary" style={{ flex: 1, maxWidth: 240 }}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '20px 0 12px' }}>
+            <span className="price" style={{ fontSize: 26 }}>{money(sel.price * qty)}</span>
+            {qty > 1 && <span className="tiny muted">{money(sel.price)} each</span>}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'stretch', gap: 10 }}>
+            <div className="qty qty-lg">
+              <button onClick={() => setQty(q => Math.max(1, q - 1))} disabled={qty <= 1} aria-label="Fewer">−</button>
+              <span aria-live="polite">{qty}</span>
+              <button onClick={() => setQty(q => Math.min(99, q + 1))} aria-label="More">+</button>
+            </div>
+            <button className="btn btn-primary" style={{ flex: 1 }}
               disabled={sel.stock === 'out'}
-              onClick={() => { addLine(p.id, sel.label); toast(`${p.name} ${sel.label} added`) }}>
-              {sel.stock === 'out' ? 'Sold out' : 'Add to cart'}
+              onClick={() => {
+                addLine(p.id, sel.label, qty)
+                toast(`${qty} × ${p.name} ${sel.label} added`)
+                setQty(1)
+              }}>
+              {sel.stock === 'out' ? 'Sold out' : qty > 1 ? `Add ${qty} to cart` : 'Add to cart'}
             </button>
           </div>
           <p className="tiny muted" style={{ marginTop: 4 }}>
@@ -1817,8 +1919,13 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
   const subtotal = ids.reduce((a, id) => a + priceOf(id, sel[id]), 0)
   const saving = subtotal * pct / 100
 
+  const [stamped, setStamped] = useState(null)
   useEffect(() => {
-    if (pct > prevPct.current) { setBumped(true); const t = setTimeout(() => setBumped(false), 520); return () => clearTimeout(t) }
+    if (pct > prevPct.current) {
+      setBumped(true); setStamped(pct)
+      const t = setTimeout(() => { setBumped(false); setStamped(null) }, 620)
+      return () => clearTimeout(t)
+    }
     prevPct.current = pct
   }, [pct])
   useEffect(() => { prevPct.current = pct })
@@ -1997,7 +2104,8 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
         <h2 style={{ fontSize: 24 }}>{label}</h2>
         <div style={{ display: 'flex', gap: 6, marginTop: 14, flexWrap: 'wrap' }}>
           {BIZ.discountTiers.map(t => (
-            <span key={t.minItems} className={cx('chip', distinct >= t.minItems ? 'chip-gold' : 'chip-out')}>
+            <span key={t.minItems}
+              className={cx('chip', distinct >= t.minItems ? 'chip-gold' : 'chip-out', stamped === t.pct && 'chip-stamp')}>
               {t.minItems}+ · {t.pct}%
             </span>
           ))}
@@ -2625,6 +2733,19 @@ export default function App() {
 
   const calc = useMemo(() => computeCart(cart), [cart])
 
+  // Something landing in the cart should be felt, not just announced by a toast.
+  const [receiving, setReceiving] = useState(false)
+  const prevCount = useRef(calc.count)
+  useEffect(() => {
+    if (calc.count > prevCount.current) {
+      setReceiving(true)
+      const t = setTimeout(() => setReceiving(false), 640)
+      prevCount.current = calc.count
+      return () => clearTimeout(t)
+    }
+    prevCount.current = calc.count
+  }, [calc.count])
+
   const addLine = useCallback((productId, size, qty = 1) => {
     setCart(c => {
       const existing = c.lines.find(l => l.productId === productId && l.size === size && !l.bundleId)
@@ -2736,7 +2857,8 @@ export default function App() {
         </button>
         <div className="spacer" />
         <button className="iconbtn" onClick={() => go('education')} aria-label="Research library">{I.book()}</button>
-        <button className="iconbtn" onClick={() => setCartOpen(true)} aria-label="Cart">
+        <button className={cx('iconbtn', receiving && 'is-receiving')}
+          onClick={() => setCartOpen(true)} aria-label="Cart">
           {I.cart()}
           {calc.count > 0 && <span className="count">{calc.count}</span>}
         </button>

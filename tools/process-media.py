@@ -74,6 +74,14 @@ for name in ('gold', 'green', 'ice', 'violet'):
     dst = os.path.join(OUT, 'products', f'vial-{name}.webp')
     report.append((f'products/vial-{name}.webp', save_webp(Image.open(src).convert('RGB'), dst, 900)))
 
+# --- the same vials reconstituted: powers tap-to-reconstitute ---------------
+for name in ('gold', 'green', 'ice', 'violet'):
+    src = os.path.join(SRC, f'vial-{name}-wet.png')
+    if not os.path.exists(src):
+        continue
+    dst = os.path.join(OUT, 'products', f'vial-{name}-wet.webp')
+    report.append((f'products/vial-{name}-wet.webp', save_webp(Image.open(src).convert('RGB'), dst, 900)))
+
 # --- hero still: the poster, and the fallback the app shows without clips ----
 hero = os.path.join(SRC, 'hero-before.png')
 if os.path.exists(hero):

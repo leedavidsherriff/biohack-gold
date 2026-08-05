@@ -89,6 +89,38 @@ Common body — only the cap colour and one accent change between the four:
 | `vial-ice.webp` | `pale ice-blue` | `a faint bloom of frost across the lower glass` | immune, longevity |
 | `vial-violet.webp` | `muted violet` | — | cognition, sleep, cosmetic |
 
+### Reconstituted counterparts — `products/vial-{name}-wet.webp`
+
+Powers tap-to-reconstitute on a product page: tap the vial and the powder goes
+into solution. Generated **from each dry still** (`medias[{role: image}]`), so
+the two are in perfect register and the cross-fade reads as the powder
+dissolving rather than as two different photographs.
+
+Subject line: `product bhg — unlabelled vial reconstituted, {colour} cap`
+
+> Keep this photograph exactly as it is - the same vial, the same cap, the same foil label band, the same steel bench, the same background, the same lighting, the same framing and the same camera position. Change one thing only: the white powder at the bottom of the vial is now fully dissolved, so the vial holds a completely clear colourless liquid filling the lower portion to the same height the powder reached, with a bright meniscus line at the surface and a faint convection swirl still turning in the solution. No powder remains anywhere. Everything else in the frame is unchanged. No people. No text anywhere in the frame - no lettering, no numbers, no barcodes, no brand marks or logos, no watermark.
+
+For the ice vial, add `the same frost,` to the keep-list so the frost bloom survives.
+
+---
+
+## Ambience bed — `media/ambience.m4a`
+
+**No credits — built from the clip's own audio** by `tools/make-ambience.py`.
+
+The hero plays ~6s, freezes on its final frame for 2.5s, then restarts. Across
+that join the clip's audio stops dead, so the seam is audible the moment anyone
+taps for sound. This bed runs underneath and covers it.
+
+The script finds the quietest 1.5s window in the clip's audio (the room tone,
+with the fizz and the settle excluded — it landed at 3.45s), then builds
+`forward + reversed`. That block ends on the sample it began with, so it loops
+seamlessly by construction: no crossfade, no click. Tiled to ~33s, lifted
++23.4 dB to a −26 dBFS bed, low-passed at 5.2 kHz so it reads as air handling
+rather than hiss.
+
+Re-run it any time the hero clip changes.
+
 ---
 
 ## Logo
