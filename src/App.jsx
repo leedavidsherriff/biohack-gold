@@ -587,16 +587,6 @@ function orderSummaryText(order) {
   ].filter(Boolean).join('\n')
 }
 
-/* Addressed to the shop and copied to the customer, so one tap both places the
-   order and leaves them a record of it. */
-function orderMailHref(order) {
-  const to = BIZ.orders?.notifyEmail || BIZ.email
-  const cc = order.customer?.email || ''
-  const subject = `Order ${order.ref} — ${money(order.total)}`
-  return `mailto:${to}?${cc ? `cc=${encodeURIComponent(cc)}&` : ''}` +
-    `subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(orderSummaryText(order))}`
-}
-
 /* Everything a bank needs, in one clipboard hit — the next best thing to the
    app-to-app handoff when no provider is configured. */
 function paymentDetailsText(order) {
@@ -2269,25 +2259,6 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
             </p>
           </div>
 
-          {/* No endpoint configured, or the POST failed: the order has not left
-              the browser, so say so and give them a one-tap way to send it. */}
-          {!sending && !sent && (
-            <div className="panel" style={{ marginTop: 12, borderColor: 'color-mix(in srgb, var(--primary) 40%, transparent)' }}>
-              <div className="eyebrow" style={{ marginBottom: 8 }}>One more step</div>
-              <p className="small" style={{ lineHeight: 1.6 }}>
-                Your order hasn’t reached us yet. Tap below to send it — it opens your email app with everything
-                filled in, addressed to us and copied to you.
-              </p>
-              <a className="btn btn-primary btn-block" style={{ marginTop: 13 }}
-                href={orderMailHref(order)}
-                onClick={() => { markNotified(order.ref); setSent(true) }}>
-                Send my order
-              </a>
-              <p className="tiny muted" style={{ marginTop: 11 }}>
-                If nothing opens, email <b>{BIZ.orders.notifyEmail}</b> quoting <b className="mono">{order.ref}</b>.
-              </p>
-            </div>
-          )}
 
           {/* App-to-app: opens the customer's banking app with everything
               already filled. Only exists once a provider is configured. */}
@@ -2364,9 +2335,10 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
           <button className="btn btn-block btn-ghost" style={{ marginTop: 9 }} onClick={() => go('account')}>
             View order status
           </button>
-          <p className="tiny muted" style={{ marginTop: 14, textAlign: 'center' }}>
+          <p className="tiny muted" style={{ marginTop: 14, textAlign: 'center', lineHeight: 1.6 }}>
             Keep your reference — <b className="mono" style={{ color: 'var(--primary)' }}>{order.ref}</b>. It is also
-            saved under Account on this device.
+            saved under Account on this device.<br />
+            Any questions, contact <b>{BIZ.orders.notifyEmail}</b> quoting it.
           </p>
         </>
       )}
@@ -2374,7 +2346,7 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
   )
 }
 
-function Account({ orders, customer, reorder, markNotified, go, toast }) {
+function Account({ orders, customer, reorder, go, toast }) {
   const [open, setOpen] = useState(null)
   const statusLabel = { awaiting_payment: 'Awaiting payment', paid: 'Payment received', fulfilled: 'Dispatched', cancelled: 'Cancelled' }
   const statusClass = { awaiting_payment: 'awaiting', paid: 'paid', fulfilled: 'fulfilled', cancelled: 'cancelled' }
@@ -2426,17 +2398,6 @@ function Account({ orders, customer, reorder, markNotified, go, toast }) {
                       <span style={{ color: 'var(--primary)' }}>−{money(o.discount)}</span></div>
                   )}
                   <div className="rowline"><b>Total</b><b>{money(o.total)}</b></div>
-
-                  {/* Never lose an order that failed to leave the browser. */}
-                  {!o.notified && (
-                    <div style={{ marginTop: 12, padding: 12, borderRadius: 11, background: 'var(--surfaceAlt)', border: '1px solid color-mix(in srgb, var(--primary) 34%, transparent)' }}>
-                      <div className="tiny" style={{ color: 'var(--primary)', fontWeight: 700 }}>Not sent to us yet</div>
-                      <a className="btn btn-sm btn-block" style={{ marginTop: 9 }}
-                        href={orderMailHref(o)} onClick={() => markNotified(o.ref)}>
-                        Send this order
-                      </a>
-                    </div>
-                  )}
 
                   {o.status === 'awaiting_payment' && (
                     <div style={{ marginTop: 12, padding: 12, borderRadius: 11, background: 'var(--surfaceAlt)' }}>
@@ -2817,8 +2778,7 @@ export default function App() {
             placeOrder={placeOrder} markNotified={markNotified} go={go} toast={toast} />
         )}
         {view === 'account' && (
-          <Account orders={orders} customer={customer} reorder={reorder}
-            markNotified={markNotified} go={go} toast={toast} />
+          <Account orders={orders} customer={customer} reorder={reorder} go={go} toast={toast} />
         )}
         {view === 'education' && <Education go={go} />}
         {view === 'guide' && <Guide slug={guideSlug} back={() => go('education')} />}
