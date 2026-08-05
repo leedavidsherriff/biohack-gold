@@ -872,9 +872,25 @@ video::-webkit-media-controls-overlay-play-button {
 
 /* ---------- builder ---------- */
 .build-row {
-  display:flex; align-items:center; gap:11px; padding:11px; border-radius:13px;
+  display:flex; align-items:stretch; padding:0; overflow:hidden; border-radius:13px;
   border:1px solid var(--border); background:var(--surface); transition:.16s; width:100%; text-align:left;
 }
+.build-toggle {
+  flex:1; min-width:0; display:flex; align-items:center; gap:11px; padding:11px; text-align:left;
+}
+.build-text { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.build-name { font-weight:650; font-size:14px; }
+.build-blurb {
+  font-size:11.5px; color:var(--muted); line-height:1.36;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.build-price { flex:none; display:flex; flex-direction:column; align-items:flex-end; gap:2px; }
+.build-info {
+  flex:none; width:46px; display:grid; place-items:center; color:var(--muted);
+  border-left:1px solid var(--border); transition:.16s;
+}
+.build-info:hover { color:var(--primary); background:var(--surfaceAlt); }
+.build-info:active { transform:scale(.92); }
 .build-row.on { border-color:var(--primary); background:color-mix(in srgb, var(--primary) 8%, var(--surface)); }
 .build-row.suggested { border-color:color-mix(in srgb, var(--accent) 38%, transparent); }
 .tickbox {
@@ -882,7 +898,10 @@ video::-webkit-media-controls-overlay-play-button {
   display:grid; place-items:center; transition:.15s;
 }
 .build-row.on .tickbox { background:var(--primary); border-color:var(--primary); color:#14120C; }
-.pairtag { font-size:10px; font-weight:700; color:var(--accent); letter-spacing:.05em; text-transform:uppercase; }
+.pairtag {
+  font-size:10px; font-weight:700; color:var(--accent); letter-spacing:.05em; text-transform:uppercase;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;   /* never push the blurb out of the row */
+}
 /* ---------- builder: choose an area ---------- */
 .goal-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
 /* Each area is its own labelled specimen, tinted to the domain hue and
@@ -1101,6 +1120,7 @@ const I = {
   shield: p => <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12 3 4.5 6v6c0 4.5 3.1 8.1 7.5 9 4.4-.9 7.5-4.5 7.5-9V6L12 3Z" /><path d="m9 12 2.2 2.2L15.4 10" /></svg>,
   snow: p => <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12 3v18M4.2 7.5l15.6 9M19.8 7.5l-15.6 9" /><path d="M12 6.4 9.6 4.6M12 6.4l2.4-1.8M12 17.6l-2.4 1.8M12 17.6l2.4 1.8" /></svg>,
   truck: p => <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M2 6.5h11v10H2z" /><path d="M13 10h4.2l2.8 3.2v3.3h-7" /><circle cx="6.5" cy="18" r="1.9" /><circle cx="16.5" cy="18" r="1.9" /></svg>,
+  info: p => <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="12" cy="12" r="9" /><path d="M12 11v5.5" /><circle cx="12" cy="7.9" r="1.05" fill="currentColor" stroke="none" /></svg>,
   star: p => <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" {...p}><path d="m12 2.8 2.7 5.9 6.3.7-4.7 4.3 1.3 6.3L12 16.8 6.4 20l1.3-6.3L3 9.4l6.3-.7L12 2.8Z" /></svg>,
   spark: p => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" {...p}><path d="M12 2.5 14 9l6.5 2-6.5 2-2 6.5-2-6.5L3.5 11 10 9l2-6.5Z" /></svg>,
 }
@@ -1587,7 +1607,7 @@ function Catalogue({ openProduct }) {
   )
 }
 
-function ProductView({ id, back, openProduct, addLine, toast }) {
+function ProductView({ id, back, backLabel = 'Back', openProduct, addLine, toast }) {
   const p = PRODUCTS[id]
   const [size, setSize] = useState(p?.sizes[0]?.label)
   useEffect(() => { setSize(PRODUCTS[id]?.sizes[0]?.label) }, [id])
@@ -1598,7 +1618,7 @@ function ProductView({ id, back, openProduct, addLine, toast }) {
   return (
     <div className="view wrap">
       <button className="btn btn-sm btn-ghost" style={{ margin: '14px 0 6px', paddingLeft: 0 }} onClick={back}>
-        {I.back({ width: 17, height: 17 })} Back
+        {I.back({ width: 17, height: 17 })} {backLabel}
       </button>
 
       <div className="two-col">
@@ -1871,21 +1891,33 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
   }
   const elsewhere = BIZ.products.filter(p => elsewhereIds.has(p.id))
 
+  /* Name and price alone are no basis for deciding whether a compound belongs
+     in a stack. Each row carries what it actually is, and an info button into
+     the full page — safe now that a part-built stack survives navigation. */
   const Row = ({ p }) => {
     const on = !!sel[p.id]
     const sug = !on && suggested.has(p.id)
+    const size = sel[p.id] || p.sizes[0].label
     return (
-      <button className={cx('build-row', on && 'on', sug && 'suggested')} onClick={() => toggle(p.id)}>
-        <span className="tickbox">{on && I.check()}</span>
-        <Vial label={p.name} hue={hueFor(p)} size={30} />
-        <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: 'block', fontWeight: 650, fontSize: 14 }}>{p.name}</span>
-          {sug
-            ? <span className="pairtag">Commonly researched with your selection</span>
-            : <span className="tiny muted">{p.sizes[0].label} · {p.purity}</span>}
-        </span>
-        <span className="price" style={{ fontSize: 14 }}>{money(priceOf(p.id, sel[p.id] || p.sizes[0].label))}</span>
-      </button>
+      <div className={cx('build-row', on && 'on', sug && 'suggested')}>
+        <button className="build-toggle" onClick={() => toggle(p.id)} aria-pressed={on}>
+          <span className="tickbox">{on && I.check()}</span>
+          <Vial label={p.name} hue={hueFor(p)} size={30} />
+          <span className="build-text">
+            <span className="build-name">{p.name}</span>
+            {sug && <span className="pairtag">Commonly researched together</span>}
+            <span className="build-blurb">{p.blurb}</span>
+          </span>
+          <span className="build-price">
+            <span className="price" style={{ fontSize: 14 }}>{money(priceOf(p.id, size))}</span>
+            <span className="tiny muted">{size} · {p.purity}</span>
+          </span>
+        </button>
+        <button className="build-info" onClick={() => openProduct(p.id)}
+          aria-label={`Read about ${p.name}`} title={`Read about ${p.name}`}>
+          {I.info()}
+        </button>
+      </div>
     )
   }
 
@@ -1948,7 +1980,7 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
         <h3 style={{ fontSize: 13, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.09em', marginBottom: 10 }}>
           {showAll ? 'All compounds' : `${label} compounds`}
         </h3>
-        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 8 }}>
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 8 }}>
           {items.map(p => <Row key={p.id} p={p} />)}
         </div>
       </section>
@@ -1962,7 +1994,7 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
             From other areas, based on what you have selected — anything you tick here stays in this
             list. Informational, not a recommendation.
           </p>
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 8 }}>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 8 }}>
             {elsewhere.map(p => <Row key={p.id} p={p} />)}
           </div>
         </section>
@@ -2479,6 +2511,7 @@ export default function App() {
   // survives navigating away and back.
   const [builderGoal, setBuilderGoal] = useState(() => LS.get('builderGoal', null))
   const [builderSel, setBuilderSel] = useState(() => LS.get('builderSel', {}))
+  const [productFrom, setProductFrom] = useState('catalogue')
   const [cartOpen, setCartOpen] = useState(false)
   const [toastMsg, setToastMsg] = useState('')
   const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 760)
@@ -2511,7 +2544,12 @@ export default function App() {
     requestAnimationFrame(() => window.scrollTo({ top: opts.keepScroll ? (scrollRef.current[next] || 0) : 0 }))
   }, [view])
 
-  const openProduct = useCallback(id => go('product', { product: id }), [go])
+  // Remember where a product was opened from, so Back returns there instead of
+  // always dumping you in the catalogue — the builder's info button depends on it.
+  const openProduct = useCallback(id => {
+    setProductFrom(prev => (view === 'product' ? prev : view))
+    go('product', { product: id })
+  }, [go, view])
 
   const calc = useMemo(() => computeCart(cart), [cart])
 
@@ -2653,7 +2691,10 @@ export default function App() {
         className={cx(view !== 'landing' && 'below-floatbar')}>
         {view === 'landing' && <Landing go={go} openProduct={openProduct} addStack={addStack} />}
         {view === 'catalogue' && <Catalogue openProduct={openProduct} />}
-        {view === 'product' && <ProductView id={productId} back={() => go('catalogue')} openProduct={openProduct} addLine={addLine} toast={toast} />}
+        {view === 'product' && (
+          <ProductView id={productId} back={() => go(productFrom)} backLabel={productFrom === 'builder' ? 'Back to your stack' : 'Back'}
+            openProduct={openProduct} addLine={addLine} toast={toast} />
+        )}
         {view === 'stacks' && <StacksView addStack={addStack} openProduct={openProduct} go={go} />}
         {view === 'builder' && (
           <Builder addBundle={addBundle} toast={toast} openProduct={openProduct}
