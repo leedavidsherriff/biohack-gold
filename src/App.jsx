@@ -1016,8 +1016,22 @@ video::-webkit-media-controls-overlay-play-button {
   background:rgba(10,10,11,.76);
   border-color:color-mix(in srgb, var(--primary) 42%, transparent);
 }
-.nav-item svg { transition:transform .2s cubic-bezier(.3,1.5,.5,1); }
+/* flex:none is load-bearing — without it the active pill's label wins the
+   space fight on a 360px phone and squashes its own icon to zero width. */
+.nav-item svg { flex:none; transition:transform .2s cubic-bezier(.3,1.5,.5,1); }
 .nav-item.on svg { transform:scale(1.04); }
+
+/* Five pills plus a label is a tight fit once the screen drops under ~380px,
+   so buy the room back from the padding rather than from the icons. */
+@media (max-width:400px) {
+  .nav { gap:6px; padding:0 10px; }
+  .nav-item { min-width:52px; padding:0 12px; gap:7px; }
+}
+/* Very narrow phones: icons only, rather than a cramped half-label. */
+@media (max-width:340px) {
+  .nav-item.on span { display:none; }
+  .nav-item { padding:0; }
+}
 
 /* ---------- forms ---------- */
 .field { margin-bottom:12px; }
