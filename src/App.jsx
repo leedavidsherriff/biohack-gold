@@ -127,7 +127,31 @@ const BIZ = {
     notifyEmail: 'orders@biohackgold.com', // PLACEHOLDER — real inbox before launch
   },
 
-  /* --- Payments: Pay by Bank only. No card processing anywhere in the app - */
+  /* --- Pay by Bank ---------------------------------------------------------
+     Bank transfer only. No cards, ever.
+
+     `pisp.createUrl` is where the app-to-app flow plugs in — the thing that
+     opens the customer's banking app with payee, amount and reference already
+     filled. That handshake is regulated: it needs a licensed payment
+     initiation provider (TrueLayer, Volt, Yapily, Token.io, GoCardless
+     Instant Bank Pay). There is no free URL scheme that does it in the UK, so
+     until an account exists this stays empty and customers get the manual
+     details with one-tap copy instead.
+
+     When you have one, point `createUrl` at your endpoint. It receives the
+     order as JSON and must return { redirectUrl } — the app sends the
+     customer there and the bank app takes over. Nothing else needs changing.
+
+     CHECK THE PROVIDER ACCEPTS THIS CATEGORY BEFORE SIGNING UP: several
+     prohibit research chemicals exactly as the card processors do.          */
+  payments: {
+    pisp: {
+      name: '',        // e.g. 'TrueLayer' — shown on the button
+      createUrl: '',   // POST order JSON -> { redirectUrl }
+    },
+  },
+
+  /* --- Payment account the transfer lands in ------------------------------ */
   bank: {
     method: 'Pay by Bank (UK bank transfer)',
     accountName: 'BioHack Gold Ltd',
@@ -571,6 +595,44 @@ function orderMailHref(order) {
   const subject = `Order ${order.ref} — ${money(order.total)}`
   return `mailto:${to}?${cc ? `cc=${encodeURIComponent(cc)}&` : ''}` +
     `subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(orderSummaryText(order))}`
+}
+
+/* Everything a bank needs, in one clipboard hit — the next best thing to the
+   app-to-app handoff when no provider is configured. */
+function paymentDetailsText(order) {
+  return [
+    `${BIZ.bank.accountName}`,
+    `Sort code: ${BIZ.bank.sortCode}`,
+    `Account number: ${BIZ.bank.accountNumber}`,
+    `Amount: ${money(order.total)}`,
+    `Reference: ${order.ref}`,
+  ].join('\n')
+}
+
+/* Hands the order to the payment initiation provider and returns the URL that
+   opens the customer's banking app. Null means no provider configured. */
+async function createBankPayment(order) {
+  const url = BIZ.payments?.pisp?.createUrl
+  if (!url) return null
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      reference: order.ref,
+      amount: order.total,
+      currency: 'GBP',
+      payee: {
+        name: BIZ.bank.accountName,
+        sortCode: BIZ.bank.sortCode.replace(/-/g, ''),
+        accountNumber: BIZ.bank.accountNumber,
+      },
+      customer: { name: order.customer.name, email: order.customer.email },
+    }),
+  })
+  if (!res.ok) throw new Error(`Payment provider returned ${res.status}`)
+  const data = await res.json()
+  if (!data?.redirectUrl) throw new Error('Payment provider returned no redirectUrl')
+  return data.redirectUrl
 }
 
 async function deliverOrder(order) {
@@ -2030,6 +2092,8 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
   const [step, setStep] = useState(0)
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
+  const [paying, setPaying] = useState(false)
+  const [payError, setPayError] = useState('')
   const [form, setForm] = useState(() => ({
     name: '', email: '', phone: '', line1: '', city: '', postcode: '', ...customer,
   }))
@@ -2225,7 +2289,33 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
             </div>
           )}
 
+          {/* App-to-app: opens the customer's banking app with everything
+              already filled. Only exists once a provider is configured. */}
+          {BIZ.payments?.pisp?.createUrl && (
+            <div style={{ marginTop: 12 }}>
+              <button className="btn btn-primary btn-block" disabled={paying}
+                onClick={async () => {
+                  setPaying(true); setPayError('')
+                  try {
+                    const url = await createBankPayment(order)
+                    if (url) window.location.href = url
+                  } catch (e) {
+                    setPayError('Could not open your bank. Use the details below instead.')
+                  } finally { setPaying(false) }
+                }}>
+                {paying ? 'Opening your bank…' : 'Pay from your banking app'}
+              </button>
+              <p className="tiny muted" style={{ marginTop: 9, textAlign: 'center' }}>
+                Opens your bank with the amount and reference already filled. No card details are taken.
+              </p>
+              {payError && <p className="err" style={{ textAlign: 'center' }}>{payError}</p>}
+            </div>
+          )}
+
           <div className="panel" style={{ marginTop: 12 }}>
+            {BIZ.payments?.pisp?.createUrl && (
+              <p className="tiny muted" style={{ marginBottom: 4 }}>Or transfer manually:</p>
+            )}
             <div className="bankrow">
               <div><div className="k">Amount</div><div className="v price">{money(order.total)}</div></div>
               <button className={cx('copybtn', copied === 'amt' && 'done')} onClick={() => copy('amt', order.total.toFixed(2))}>
@@ -2257,6 +2347,13 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
               </button>
             </div>
           </div>
+
+          {/* One tap for the lot — payee, sort code, account, amount, reference. */}
+          <button className={cx('btn', 'btn-block', copied === 'all' && 'btn-primary')}
+            style={{ marginTop: 11 }}
+            onClick={() => copy('all', paymentDetailsText(order))}>
+            {copied === 'all' ? 'All details copied' : 'Copy all payment details'}
+          </button>
 
           <p className="tiny muted" style={{ marginTop: 12 }}>{BIZ.bank.note}</p>
 
