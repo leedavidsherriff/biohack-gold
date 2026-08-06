@@ -170,8 +170,13 @@ const BIZ = {
   bank: {
     method: 'Pay by Bank (UK bank transfer)',
     accountName: 'BioHack Gold Ltd',
-    sortCode: '04-00-75',            // PLACEHOLDER — replace with real details
-    accountNumber: '00000000',       // PLACEHOLDER — replace with real details
+    /* Real account, Barclays, supplied by Lee 6 Aug 2026. These three lines are
+       what a customer types into their banking app, so a typo here is a payment
+       that never arrives and an order that never gets dispatched. Change them
+       only against details given in writing, and send a £1 test through the
+       live checkout afterwards. */
+    sortCode: '20-18-17',
+    accountNumber: '73569284',
     refPrefix: 'BHG',
     note: 'Payment is matched automatically to your order reference. Orders are dispatched once funds clear — usually the same working day for Faster Payments.',
   },
