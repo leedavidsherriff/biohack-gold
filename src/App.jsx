@@ -134,7 +134,11 @@ const BIZ = {
      whole order filled in, addressed to `notifyEmail` and copied to
      themselves. Nothing is ever silently lost.                              */
   orders: {
-    endpoint: '',                          // ← set this and delivery is automatic
+    // The BioHack order store (Base44 app biohack-ops, 6a7392550ff7e05ef35f9650).
+    // It re-prices every line against its own catalogue, caps the discount, and
+    // refuses anything without the eligibility declaration. Orders land as Order
+    // rows and are what the ops agent and the phone dashboard both read.
+    endpoint: 'https://biohack-ops-f35f9650.base44.app/api/functions/placeOrder',
     notifyEmail: 'orders@biohackgold.com', // PLACEHOLDER — real inbox before launch
   },
 
@@ -636,6 +640,17 @@ async function createBankPayment(order) {
   return data.redirectUrl
 }
 
+/* A line's SKU is `productId-size`, upper-cased and reduced to A–Z0–9 and
+   dashes. The order store derives its catalogue keys the same way, and the SKU
+   is what a bank reference is ultimately matched against, so the two rules have
+   to stay identical. Change one, change the other. */
+const skuFor = (productId, size) =>
+  `${productId}-${size}`
+    .toUpperCase()
+    .replace(/×/g, 'X')
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
 async function deliverOrder(order) {
   const ep = BIZ.orders?.endpoint
   if (!ep) return false
@@ -644,15 +659,27 @@ async function deliverOrder(order) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
-        reference: order.ref,
-        placed: new Date(order.createdAt).toISOString(),
-        status: order.status,
-        total: order.total,
-        subtotal: order.subtotal,
-        discount: order.discount,
-        customer: order.customer,
-        items: order.lines.map(l => ({ name: l.name, size: l.size, qty: l.qty, price: l.price })),
-        summary: orderSummaryText(order),
+        /* Money crosses the wire in PENCE as whole numbers. The endpoint
+           re-prices every line from its own catalogue and recomputes the total
+           regardless — these figures are what the customer was *shown*, and a
+           disagreement gets the order flagged rather than silently dispatched. */
+        total_pence: Math.round(order.total * 100),
+        discount_pence: Math.round((order.discount || 0) * 100),
+        items: order.lines.map(l => ({
+          sku: skuFor(l.productId, l.size),
+          qty: l.qty,
+        })),
+        customer: {
+          name: order.customer.name,
+          email: order.customer.email,
+          phone: order.customer.phone,
+          address: [order.customer.line1, order.customer.city].filter(Boolean).join(', '),
+          postcode: order.customer.postcode,
+        },
+        /* Both consent boxes are validated before an order can be placed, so
+           this is a statement of fact, not an assumption. */
+        eligibility_confirmed: true,
+        source: 'site',
       }),
     })
     return res.ok
