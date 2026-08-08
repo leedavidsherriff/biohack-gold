@@ -1,4 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+/* Local QR encoder, vendored rather than installed — see src/vendor/qrcode.mjs.
+   Deliberately not an image URL from a QR web service: that would post the
+   customer's payment reference and amount to a third party on every checkout,
+   and would leave a dead box when their network blocks it. */
+import qrcode from './vendor/qrcode.mjs'
 
 /* ============================================================================
    BIZ — the entire reskin surface.
@@ -18,9 +23,31 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 const BIZ = {
   name: 'BioHack Gold',
   shortName: 'BHG',
-  // The mark is a symbol only — the wordmark is real type, never generated.
-  // `logo-chain.webp` is the alternate (peptide-chain hexagons).
-  logo: './media/logo.webp',
+  /* Where the media lives.
+
+     Every media path below is written './media/...' so the app runs from a
+     plain folder. `assetBase` is what those paths resolve against, and it is
+     the ONE thing to change when the app is hosted somewhere that does not
+     carry its own media — pasting it into a Base44 builder, for instance,
+     where the code arrives but the video and stills do not. Point it at a host
+     that serves /media/... and everything else keeps working:
+
+       assetBase: 'https://leedavidsherriff.github.io/biohack-gold/'
+
+     Absolute paths (https://…) are left alone, so individual entries can be
+     overridden one at a time. */
+  assetBase: './',
+
+  /* Karl's own logo, lifted from the shop he was already running (the DNA-helix
+     hexagon with the BIOHACK GOLD lockup). Keyed off its black background so
+     the glow sits on the page rather than a black square.
+
+     `logo` is the mark alone — the header pairs it with real type, so a second
+     wordmark there would say the name twice. `logoLockup` is the full artwork,
+     used where the brand stands on its own. Our earlier generated marks are
+     still at logo.webp / logo-chain.webp. */
+  logo: './media/logo-mark.webp',
+  logoLockup: './media/logo-lockup.webp',
   tagline: 'Research-grade peptides, verified to the batch.',
   established: 'Est. 2026 · London',
   email: 'info@biohackgold.com',
@@ -55,7 +82,18 @@ const BIZ = {
     { value: '24h', label: 'Dispatch window' },
   ],
 
-  labPartner: 'Janoshik Analytical',
+  /* Karl's call (8 Aug 2026): the shop he was already running states batches
+     are third-party tested with an independent COA, and he is the one who deals
+     with the labs. That wording is restored here and used everywhere.
+
+     Two limits stay, because neither is his to waive:
+     - NO LAB IS NAMED. Printing a real laboratory's name is a claim about that
+       company; leave `labPartner` empty unless Karl supplies the name in
+       writing, and the copy reads "an independent laboratory" instead.
+     - Nothing here promises a COA is published on the site. Karl's COAs carry
+       his supplier's name, so they are supplied with the batch, not posted. */
+  labPartner: '',
+  coaSource: 'an independent laboratory',
 
   /* --- Higgsfield media -------------------------------------------------
      Everything here is optional. Each file is HEAD-probed at runtime: what
@@ -118,7 +156,7 @@ const BIZ = {
     'I will not administer them to humans or animals.',
 
   returnsText:
-    'Unopened vials may be returned within 14 days of delivery. Opened vials cannot be accepted for hygiene and ' +
+    'Unopened vials may be returned within 30 days of delivery. Opened vials cannot be accepted for hygiene and ' +
     'chain-of-custody reasons. Cold-chain items are dispatched with temperature control; report any transit issue ' +
     'within 24 hours of delivery.',
 
@@ -139,7 +177,18 @@ const BIZ = {
     // refuses anything without the eligibility declaration. Orders land as Order
     // rows and are what the ops agent and the phone dashboard both read.
     endpoint: 'https://biohack-ops-f35f9650.base44.app/api/functions/placeOrder',
+    /* Customer-facing order lookup. Needs the reference AND the email the order
+       was placed with, so it confirms something the caller already knows rather
+       than opening the order book to anyone who can guess a reference. */
+    trackEndpoint: 'https://biohack-ops-f35f9650.base44.app/api/functions/trackOrder',
+    /* Live price and stock, so Karl can change both from the ops hub without a
+       rebuild. The catalogue below is still the source of truth for everything
+       else and for the site working at all — this only overlays numbers. */
+    catalogueEndpoint: 'https://biohack-ops-f35f9650.base44.app/api/functions/catalogue',
     notifyEmail: 'orders@biohackgold.com', // PLACEHOLDER — real inbox before launch
+    /* Where a dispatched parcel is tracked. Shown next to the tracking number
+       the ops hub records against the order. */
+    carrierUrl: 'https://www.royalmail.com/track-your-item',
   },
 
   /* --- Pay by Bank ---------------------------------------------------------
@@ -170,6 +219,14 @@ const BIZ = {
   bank: {
     method: 'Pay by Bank (UK bank transfer)',
     accountName: 'BioHack Gold Ltd',
+    /* Karl's shop offered these two ways to pay. Both land in the SAME account
+       — the toggle changes which app the customer is paying from, not where the
+       money goes. If Wallid ever has its own sort code and account number, give
+       this rail its own `sortCode`/`accountNumber` and the panel will use them. */
+    rails: [
+      { id: 'barclays', label: 'Barclays', bankName: 'Barclays Bank' },
+      { id: 'wallid', label: 'Wallid', bankName: 'Wallid' },
+    ],
     /* Real account, Barclays, supplied by Lee 6 Aug 2026. These three lines are
        what a customer types into their banking app, so a typo here is a payment
        that never arrives and an order that never gets dispatched. Change them
@@ -179,6 +236,21 @@ const BIZ = {
     accountNumber: '73569284',
     refPrefix: 'BHG',
     note: 'Payment is matched automatically to your order reference. Orders are dispatched once funds clear — usually the same working day for Faster Payments.',
+  },
+
+  /* --- Delivery -----------------------------------------------------------
+     Karl's existing shop charged £9.99 and made it free over £100, so that is
+     what runs here.
+
+     THIS MUST MATCH THE SERVER. `placeOrder` in the biohack-ops app recomputes
+     the total from its own catalogue and flags anything that disagrees by more
+     than a few pence as possible tampering. Change these two numbers and you
+     change BHG_SHIPPING_PENCE / BHG_FREE_OVER_PENCE at the same time, or every
+     real order lands flagged and the flag stops meaning anything.            */
+  shipping: {
+    fee: 9.99,
+    freeOver: 100,
+    label: 'Tracked 24, dispatched cold',
   },
 
   /* --- Stack builder discount ladder ------------------------------------- */
@@ -199,21 +271,59 @@ const BIZ = {
     { id: 'sleep', label: 'Sleep & circadian' },
     { id: 'immune', label: 'Immune & inflammation' },
     { id: 'longevity', label: 'Longevity & cellular' },
+    { id: 'neuroendocrine', label: 'Neuroendocrine' },
   ],
 
+  /* --- Catalogue -----------------------------------------------------------
+     PRICES ARE KARL'S REAL PRICES, taken from the shop he was already running
+     (8 Aug 2026). Do not "correct" them against market rates — the earlier
+     estimates in this file were roughly double these and were wrong.
+
+     `stock` is per size: 'in' or 'out'. A product with no in-stock size is
+     still listed — it shows as out of stock and cannot be added to a cart or
+     pulled in by a stack. That is deliberate: the range should look complete
+     without claiming to hold material we do not hold.
+
+     Products carrying a real price below are the ones Karl actually holds.
+     The rest are ours, kept listed and marked out of stock.
+     `sequence` is shown on the product page when set; fill it from the CoA
+     rather than from memory, and leave it empty until you have the CoA.       */
   products: [
     {
+      id: 'retatrutide', name: 'Retatrutide', category: 'peptide', goals: ['metabolic'],
+      purity: '≥99%', badges: ['bestseller'], sequence: '',
+      blurb: 'Single-chain peptide acting at the GLP-1, GIP and glucagon receptors.',
+      description:
+        'A synthetic peptide characterised in the literature as a triple agonist at the GLP-1, GIP and glucagon ' +
+        'receptors. Appears in incretin-signalling and energy-metabolism research models.',
+      sizes: [
+        { label: '10mg', price: 69.99, stock: 'in' },
+        { label: '20mg', price: 89.99, stock: 'in' },
+        { label: '30mg', price: 169.00, stock: 'in' },
+      ],
+      pairsWith: ['tirzepatide', 'bac-water'],
+      researchRefs: ['[REF PLACEHOLDER] Triple incretin receptor agonist literature — add verified citation'],
+    },
+    {
+      id: 'tirzepatide', name: 'Tirzepatide', category: 'peptide', goals: ['metabolic'],
+      purity: '≥99%', badges: ['bestseller'], sequence: '',
+      blurb: 'Dual GIP and GLP-1 receptor agonist peptide.',
+      description:
+        'A synthetic 39-amino-acid peptide described in the literature as a dual agonist at the GIP and GLP-1 ' +
+        'receptors. Widely referenced in incretin-pathway and metabolic-signalling research.',
+      sizes: [{ label: '30mg', price: 94.00, stock: 'in' }],
+      pairsWith: ['retatrutide', 'bac-water'],
+      researchRefs: ['[REF PLACEHOLDER] Dual GIP/GLP-1 receptor agonist literature — add verified citation'],
+    },
+    {
       id: 'bpc-157', name: 'BPC-157', category: 'peptide', goals: ['recovery'],
-      purity: '≥99%', badges: ['bestseller'],
+      purity: '≥99%', badges: ['bestseller'], sequence: '',
       blurb: 'Pentadecapeptide sequence derived from a protein identified in gastric juice.',
       description:
         'A synthetic 15-amino-acid sequence corresponding to a partial sequence of body protection compound isolated from gastric juice. ' +
         'One of the most frequently referenced compounds in preclinical tissue-repair literature, typically appearing in in-vitro and rodent-model studies.',
-      sizes: [
-        { label: '5mg', price: 49.99, stock: 'in' },
-        { label: '10mg', price: 79.99, stock: 'in' },
-      ],
-      pairsWith: ['tb-500', 'kpv'],
+      sizes: [{ label: '10mg', price: 37.50, stock: 'in' }],
+      pairsWith: ['tb-500', 'ghk-cu'],
       researchRefs: [
         '[REF PLACEHOLDER] Preclinical tissue-repair model literature — add verified citation',
         '[REF PLACEHOLDER] Gastrointestinal model reviews — add verified citation',
@@ -221,210 +331,276 @@ const BIZ = {
     },
     {
       id: 'tb-500', name: 'TB-500', category: 'peptide', goals: ['recovery'],
-      purity: '≥99%', badges: ['bestseller'],
+      purity: '≥99%', badges: ['bestseller'], sequence: '',
       blurb: 'Synthetic fragment corresponding to a region of thymosin beta-4.',
       description:
         'A synthetic peptide corresponding to an active region of the naturally occurring protein thymosin beta-4. ' +
         'Appears widely in cell-migration and actin-binding research models.',
-      sizes: [{ label: '5mg', price: 59.99, stock: 'in' }, { label: '10mg', price: 94.99, stock: 'in' }],
+      sizes: [{ label: '10mg', price: 40.00, stock: 'in' }],
       pairsWith: ['bpc-157', 'ghk-cu'],
       researchRefs: ['[REF PLACEHOLDER] Thymosin beta-4 cell-migration literature — add verified citation'],
     },
     {
-      id: 'cjc-1295', name: 'CJC-1295', category: 'peptide', goals: ['growth'],
-      purity: '≥99%', badges: ['bestseller'],
-      blurb: 'Modified growth hormone releasing hormone analogue.',
+      id: 'cjc-1295-ipa', name: 'CJC-1295 No DAC (w/ Ipamorelin)', category: 'peptide', goals: ['growth'],
+      purity: '≥99%', badges: ['bestseller'], sequence: '',
+      blurb: 'Blended vial: modified GHRH analogue without DAC, with a selective secretagogue.',
       description:
-        'A synthetic analogue of growth hormone releasing hormone (GHRH) carrying amino acid substitutions that extend its half-life in vitro. ' +
-        'Studied alongside secretagogue peptides in endocrine research models.',
-      sizes: [{ label: '2mg', price: 54.99, stock: 'in' }, { label: '5mg', price: 89.99, stock: 'in' }],
-      pairsWith: ['ipamorelin', 'aod-9604'],
-      researchRefs: ['[REF PLACEHOLDER] GHRH analogue pharmacokinetic literature — add verified citation'],
-    },
-    {
-      id: 'ipamorelin', name: 'Ipamorelin', category: 'peptide', goals: ['growth'],
-      purity: '≥99%', badges: ['bestseller'],
-      blurb: 'Selective pentapeptide growth hormone secretagogue.',
-      description:
-        'A synthetic pentapeptide characterised in the literature as a selective ghrelin-receptor agonist. ' +
-        'Frequently paired with GHRH analogues in comparative endocrine research.',
-      sizes: [{ label: '5mg', price: 49.99, stock: 'in' }, { label: '10mg', price: 79.99, stock: 'in' }],
-      pairsWith: ['cjc-1295', 'mots-c'],
-      researchRefs: ['[REF PLACEHOLDER] Ghrelin-receptor selectivity literature — add verified citation'],
+        'A single vial containing CJC-1295 without the drug affinity complex alongside Ipamorelin, the pairing that ' +
+        'appears most often in comparative endocrine research. Supplied blended, so the two are reconstituted together.',
+      sizes: [{ label: '10mg', price: 59.00, stock: 'in' }],
+      pairsWith: ['bac-water', 'mots-c'],
+      researchRefs: ['[REF PLACEHOLDER] GHRH analogue + secretagogue comparative literature — add verified citation'],
     },
     {
       id: 'ghk-cu', name: 'GHK-Cu', category: 'peptide', goals: ['cosmetic', 'recovery'],
-      purity: '≥99%', badges: ['bestseller'],
+      purity: '≥99%', badges: [], sequence: '',
       blurb: 'Copper-binding tripeptide complex.',
       description:
         'A naturally occurring tripeptide (glycyl-L-histidyl-L-lysine) in complex with copper(II). ' +
         'Extensively referenced in dermal fibroblast and extracellular-matrix research.',
-      sizes: [{ label: '50mg', price: 49.99, stock: 'in' }, { label: '100mg', price: 84.99, stock: 'in' }],
-      pairsWith: ['glutathione', 'bpc-157'],
+      sizes: [{ label: '100mg', price: 55.00, stock: 'in' }],
+      pairsWith: ['glutathione', 'snap-8'],
       researchRefs: ['[REF PLACEHOLDER] Dermal fibroblast / ECM literature — add verified citation'],
     },
     {
-      id: 'aod-9604', name: 'AOD-9604', category: 'peptide', goals: ['metabolic'],
-      purity: '≥99%', badges: [],
-      blurb: 'Modified fragment of the human growth hormone C-terminus.',
+      id: 'glutathione', name: 'Glutathione', category: 'peptide', goals: ['longevity', 'cosmetic'],
+      purity: '≥99%', badges: [], sequence: '',
+      blurb: 'Endogenous tripeptide antioxidant, lyophilised.',
       description:
-        'A synthetic peptide corresponding to residues 176–191 of human growth hormone with an added tyrosine residue. ' +
-        'Studied in adipocyte and lipid-metabolism research models.',
-      sizes: [{ label: '5mg', price: 54.99, stock: 'in' }],
-      pairsWith: ['mots-c', 'cjc-1295'],
-      researchRefs: ['[REF PLACEHOLDER] hGH fragment adipocyte literature — add verified citation'],
+        'The tripeptide gamma-glutamyl-cysteinyl-glycine, central to cellular redox research. ' +
+        'Supplied lyophilised for in-vitro oxidative-stress work.',
+      sizes: [{ label: '600mg', price: 22.99, stock: 'in' }],
+      pairsWith: ['ghk-cu', 'nad'],
+      researchRefs: ['[REF PLACEHOLDER] Cellular redox / oxidative stress literature — add verified citation'],
+    },
+    {
+      id: 'nad', name: 'NAD+', category: 'compound', goals: ['longevity', 'metabolic'],
+      purity: '≥99%', badges: [], sequence: '',
+      blurb: 'Nicotinamide adenine dinucleotide — a coenzyme, not a peptide.',
+      description:
+        'The coenzyme nicotinamide adenine dinucleotide, supplied lyophilised. Central to redox and sirtuin ' +
+        'research and to cellular energy-metabolism models. Listed alongside the peptide range because it appears ' +
+        'in the same literature, but it is a coenzyme rather than a peptide.',
+      sizes: [{ label: '500mg', price: 55.00, stock: 'in' }],
+      pairsWith: ['mots-c', 'glutathione'],
+      researchRefs: ['[REF PLACEHOLDER] NAD+ / sirtuin pathway literature — add verified citation'],
     },
     {
       id: 'mots-c', name: 'MOTS-c', category: 'peptide', goals: ['metabolic', 'longevity'],
-      purity: '≥99%', badges: ['new'],
+      purity: '≥99%', badges: [], sequence: '',
       blurb: 'Mitochondrial-derived peptide of 16 amino acids.',
       description:
         'A peptide encoded in the mitochondrial genome, identified in cellular energy-metabolism research. ' +
         'Commonly appears in AMPK-pathway and metabolic-signalling studies.',
-      sizes: [{ label: '10mg', price: 59.99, stock: 'in' }],
-      pairsWith: ['aod-9604', 'epitalon'],
+      sizes: [
+        { label: '10mg', price: 34.99, stock: 'in' },
+        { label: '40mg', price: 64.50, stock: 'in' },
+      ],
+      pairsWith: ['nad', 'epitalon'],
       researchRefs: ['[REF PLACEHOLDER] Mitochondrial-derived peptide literature — add verified citation'],
     },
     {
       id: 'epitalon', name: 'Epitalon', category: 'peptide', goals: ['longevity', 'sleep'],
-      purity: '≥99%', badges: [],
+      purity: '≥99%', badges: [], sequence: '',
       blurb: 'Synthetic tetrapeptide studied in telomere and pineal research.',
       description:
         'A synthetic tetrapeptide (Ala-Glu-Asp-Gly) developed from pineal gland extract research. ' +
         'Referenced in telomerase-activity and circadian-signalling literature.',
-      sizes: [{ label: '10mg', price: 54.99, stock: 'in' }, { label: '20mg', price: 89.99, stock: 'in' }],
-      pairsWith: ['dsip', 'ghk-cu'],
+      sizes: [{ label: '10mg', price: 19.99, stock: 'in' }],
+      pairsWith: ['mots-c', 'glutathione'],
       researchRefs: ['[REF PLACEHOLDER] Telomerase / pineal peptide literature — add verified citation'],
     },
     {
+      id: 'melanotan-2', name: 'Melanotan II', category: 'peptide', goals: ['cosmetic'],
+      purity: '≥99%', badges: [], sequence: '',
+      blurb: 'Cyclic analogue of alpha-melanocyte-stimulating hormone.',
+      description:
+        'A synthetic cyclic heptapeptide analogue of alpha-MSH, non-selective across the melanocortin receptors. ' +
+        'Appears in melanocortin-receptor and pigmentation research models.',
+      sizes: [{ label: '10mg', price: 23.50, stock: 'in' }],
+      pairsWith: ['pt-141', 'bac-water'],
+      researchRefs: ['[REF PLACEHOLDER] Melanocortin receptor / pigmentation literature — add verified citation'],
+    },
+    {
+      id: 'pt-141', name: 'PT-141', category: 'peptide', goals: ['neuroendocrine'],
+      purity: '≥99%', badges: [], sequence: '',
+      blurb: 'Melanocortin receptor agonist peptide, a metabolite of alpha-MSH analogue research.',
+      description:
+        'A synthetic heptapeptide (bremelanotide) described in the literature as an agonist at the melanocortin ' +
+        'receptors, with MC4R activity the usual focus. Studied in central melanocortin-signalling models.',
+      sizes: [{ label: '10mg', price: 42.50, stock: 'in' }],
+      pairsWith: ['melanotan-2', 'oxytocin'],
+      researchRefs: ['[REF PLACEHOLDER] MC4R / central melanocortin signalling literature — add verified citation'],
+    },
+    {
+      id: 'snap-8', name: 'SNAP-8', category: 'peptide', goals: ['cosmetic'],
+      purity: '≥99%', badges: [], sequence: '',
+      blurb: 'Acetyl octapeptide-3, an elongated fragment of the SNAP-25 protein.',
+      description:
+        'A synthetic eight-amino-acid peptide corresponding to an elongated N-terminal fragment of SNAP-25. ' +
+        'Appears in SNARE-complex and topical cosmetic-science research.',
+      sizes: [{ label: '10mg', price: 22.00, stock: 'in' }],
+      pairsWith: ['ghk-cu', 'glutathione'],
+      researchRefs: ['[REF PLACEHOLDER] SNARE complex / acetyl octapeptide literature — add verified citation'],
+    },
+    {
+      id: 'kisspeptin', name: 'Kisspeptin-10', category: 'peptide', goals: ['neuroendocrine'],
+      purity: '≥99%', badges: [], sequence: '',
+      blurb: 'Decapeptide fragment of the KISS1 gene product.',
+      description:
+        'A 10-amino-acid fragment of the kisspeptin family, encoded by the KISS1 gene. ' +
+        'Studied in reproductive-endocrinology and GnRH-signalling models.',
+      sizes: [{ label: '10mg', price: 25.00, stock: 'in' }],
+      pairsWith: ['oxytocin', 'pt-141'],
+      researchRefs: ['[REF PLACEHOLDER] KISS1 / GnRH signalling literature — add verified citation'],
+    },
+    {
+      id: 'oxytocin', name: 'Oxytocin Acetate', category: 'peptide', goals: ['neuroendocrine'],
+      purity: '≥99%', badges: [], sequence: '',
+      blurb: 'Nine-amino-acid cyclic neuropeptide, supplied as the acetate salt.',
+      description:
+        'A cyclic nonapeptide neurohypophysial hormone, supplied as the acetate salt. ' +
+        'Appears extensively in social-behaviour and receptor-binding research models.',
+      sizes: [{ label: '10mg', price: 29.99, stock: 'in' }],
+      pairsWith: ['kisspeptin', 'pt-141'],
+      researchRefs: ['[REF PLACEHOLDER] Oxytocin receptor-binding literature — add verified citation'],
+    },
+    {
+      id: 'bac-water', name: 'Bacteriostatic Water', category: 'supply', goals: [],
+      purity: '0.9% benzyl alcohol', badges: ['essential'], sequence: '',
+      blurb: 'Sterile water with 0.9% benzyl alcohol, multi-dose vial.',
+      description:
+        'Sterile bacteriostatic water containing 0.9% benzyl alcohol as a preservative. ' +
+        'Standard laboratory diluent for reconstituting lyophilised peptides.',
+      sizes: [
+        { label: '3ml', price: 4.50, stock: 'in' },
+        { label: '10ml', price: 9.95, stock: 'in' },
+      ],
+      pairsWith: [],
+      researchRefs: [],
+    },
+
+    /* ---- Listed, not held. Prices below are our earlier ESTIMATES and have
+       never been sold at — set a real price at the same time you set a size
+       back to 'in'. ------------------------------------------------------- */
+    {
+      id: 'cjc-1295', name: 'CJC-1295', category: 'peptide', goals: ['growth'],
+      purity: '≥99%', badges: [], sequence: '',
+      blurb: 'Modified growth hormone releasing hormone analogue, unblended.',
+      description:
+        'A synthetic analogue of growth hormone releasing hormone (GHRH) carrying amino acid substitutions that extend its half-life in vitro. ' +
+        'Studied alongside secretagogue peptides in endocrine research models. Supplied on its own — the blended vial is stocked separately.',
+      sizes: [{ label: '2mg', price: 54.99, stock: 'out' }, { label: '5mg', price: 89.99, stock: 'out' }],
+      pairsWith: ['cjc-1295-ipa'],
+      researchRefs: ['[REF PLACEHOLDER] GHRH analogue pharmacokinetic literature — add verified citation'],
+    },
+    {
+      id: 'ipamorelin', name: 'Ipamorelin', category: 'peptide', goals: ['growth'],
+      purity: '≥99%', badges: [], sequence: '',
+      blurb: 'Selective pentapeptide growth hormone secretagogue.',
+      description:
+        'A synthetic pentapeptide characterised in the literature as a selective ghrelin-receptor agonist. ' +
+        'Frequently paired with GHRH analogues in comparative endocrine research.',
+      sizes: [{ label: '5mg', price: 49.99, stock: 'out' }, { label: '10mg', price: 79.99, stock: 'out' }],
+      pairsWith: ['cjc-1295-ipa'],
+      researchRefs: ['[REF PLACEHOLDER] Ghrelin-receptor selectivity literature — add verified citation'],
+    },
+    {
+      id: 'aod-9604', name: 'AOD-9604', category: 'peptide', goals: ['metabolic'],
+      purity: '≥99%', badges: [], sequence: '',
+      blurb: 'Modified fragment of the human growth hormone C-terminus.',
+      description:
+        'A synthetic peptide corresponding to residues 176–191 of human growth hormone with an added tyrosine residue. ' +
+        'Studied in adipocyte and lipid-metabolism research models.',
+      sizes: [{ label: '5mg', price: 54.99, stock: 'out' }],
+      pairsWith: ['mots-c'],
+      researchRefs: ['[REF PLACEHOLDER] hGH fragment adipocyte literature — add verified citation'],
+    },
+    {
       id: 'dsip', name: 'DSIP', category: 'peptide', goals: ['sleep'],
-      purity: '≥99%', badges: [],
+      purity: '≥99%', badges: [], sequence: '',
       blurb: 'Delta sleep-inducing peptide — nonapeptide first isolated from rabbit cerebral venous blood.',
       description:
         'A nonapeptide originally isolated in sleep-physiology research. ' +
         'Appears in EEG and circadian-rhythm animal-model literature.',
-      sizes: [{ label: '5mg', price: 44.99, stock: 'in' }],
-      pairsWith: ['epitalon', 'selank'],
+      sizes: [{ label: '5mg', price: 44.99, stock: 'out' }],
+      pairsWith: ['epitalon'],
       researchRefs: ['[REF PLACEHOLDER] Delta-wave sleep model literature — add verified citation'],
     },
     {
       id: 'semax', name: 'Semax', category: 'peptide', goals: ['cognition'],
-      purity: '≥99%', badges: [],
+      purity: '≥99%', badges: [], sequence: '',
       blurb: 'Synthetic heptapeptide analogue of an ACTH fragment.',
       description:
         'A synthetic peptide derived from the ACTH(4-10) fragment with a C-terminal Pro-Gly-Pro extension. ' +
         'Studied in neurotrophic-factor expression and cognitive-model research.',
-      sizes: [{ label: '10mg', price: 49.99, stock: 'in' }, { label: '30mg', price: 99.99, stock: 'in' }],
+      sizes: [{ label: '10mg', price: 49.99, stock: 'out' }, { label: '30mg', price: 99.99, stock: 'out' }],
       pairsWith: ['selank', 'dihexa'],
       researchRefs: ['[REF PLACEHOLDER] ACTH-fragment neurotrophic literature — add verified citation'],
     },
     {
       id: 'selank', name: 'Selank', category: 'peptide', goals: ['cognition'],
-      purity: '≥99%', badges: [],
+      purity: '≥99%', badges: [], sequence: '',
       blurb: 'Synthetic heptapeptide analogue of tuftsin.',
       description:
         'A synthetic analogue of the endogenous immunomodulatory peptide tuftsin, extended with Pro-Gly-Pro. ' +
         'Referenced in anxiolytic-model and neuropeptide research.',
-      sizes: [{ label: '10mg', price: 49.99, stock: 'in' }],
+      sizes: [{ label: '10mg', price: 49.99, stock: 'out' }],
       pairsWith: ['semax', 'dsip'],
       researchRefs: ['[REF PLACEHOLDER] Tuftsin analogue behavioural-model literature — add verified citation'],
     },
     {
       id: 'dihexa', name: 'Dihexa', category: 'peptide', goals: ['cognition'],
-      purity: '≥99%', badges: ['new'],
+      purity: '≥99%', badges: [], sequence: '',
       blurb: 'Small-molecule angiotensin IV analogue.',
       description:
         'An orally-stable analogue derived from angiotensin IV research, studied for hepatocyte growth factor / c-Met ' +
         'signalling in neuroscience models.',
-      sizes: [{ label: '20mg', price: 64.99, stock: 'in' }],
+      sizes: [{ label: '20mg', price: 64.99, stock: 'out' }],
       pairsWith: ['semax', 'selank'],
       researchRefs: ['[REF PLACEHOLDER] HGF/c-Met signalling literature — add verified citation'],
     },
     {
       id: 'kpv', name: 'KPV', category: 'peptide', goals: ['immune', 'recovery'],
-      purity: '≥99%', badges: [],
+      purity: '≥99%', badges: [], sequence: '',
       blurb: 'C-terminal tripeptide fragment of alpha-MSH.',
       description:
         'A tripeptide (Lys-Pro-Val) corresponding to the C-terminal fragment of alpha-melanocyte-stimulating hormone. ' +
         'Appears in inflammatory-pathway and mucosal research models.',
-      sizes: [{ label: '10mg', price: 54.99, stock: 'in' }],
+      sizes: [{ label: '10mg', price: 54.99, stock: 'out' }],
       pairsWith: ['bpc-157', 'll-37'],
       researchRefs: ['[REF PLACEHOLDER] Alpha-MSH fragment inflammatory-model literature — add verified citation'],
     },
     {
       id: 'll-37', name: 'LL-37', category: 'peptide', goals: ['immune'],
-      purity: '≥99%', badges: [],
+      purity: '≥99%', badges: [], sequence: '',
       blurb: 'Human cathelicidin-derived antimicrobial peptide.',
       description:
         'A 37-residue peptide derived from the human cathelicidin precursor protein hCAP18. ' +
         'Widely used in antimicrobial-peptide and innate-immunity in-vitro research.',
-      sizes: [{ label: '5mg', price: 64.99, stock: 'in' }],
+      sizes: [{ label: '5mg', price: 64.99, stock: 'out' }],
       pairsWith: ['kpv', 'thymosin-alpha-1'],
       researchRefs: ['[REF PLACEHOLDER] Cathelicidin innate-immunity literature — add verified citation'],
     },
     {
       id: 'thymosin-alpha-1', name: 'Thymosin Alpha-1', category: 'peptide', goals: ['immune'],
-      purity: '≥99%', badges: [],
+      purity: '≥99%', badges: [], sequence: '',
       blurb: '28-amino-acid peptide originally isolated from thymic tissue.',
       description:
         'A synthetic version of a peptide first characterised from thymus extract. ' +
         'Frequently referenced in T-cell and immunomodulation research literature.',
-      sizes: [{ label: '5mg', price: 64.99, stock: 'in' }, { label: '10mg', price: 109.99, stock: 'in' }],
+      sizes: [{ label: '5mg', price: 64.99, stock: 'out' }, { label: '10mg', price: 109.99, stock: 'out' }],
       pairsWith: ['ll-37', 'glutathione'],
       researchRefs: ['[REF PLACEHOLDER] Thymic peptide immunomodulation literature — add verified citation'],
     },
     {
-      id: 'glutathione', name: 'Glutathione', category: 'peptide', goals: ['longevity', 'cosmetic'],
-      purity: '≥99%', badges: [],
-      blurb: 'Endogenous tripeptide antioxidant, lyophilised.',
-      description:
-        'The tripeptide gamma-glutamyl-cysteinyl-glycine, central to cellular redox research. ' +
-        'Supplied lyophilised for in-vitro oxidative-stress work.',
-      sizes: [{ label: '600mg', price: 44.99, stock: 'in' }],
-      pairsWith: ['ghk-cu', 'thymosin-alpha-1'],
-      researchRefs: ['[REF PLACEHOLDER] Cellular redox / oxidative stress literature — add verified citation'],
-    },
-    {
-      id: 'kisspeptin', name: 'Kisspeptin-10', category: 'peptide', goals: ['metabolic', 'longevity'],
-      purity: '≥99%', badges: [],
-      blurb: 'Decapeptide fragment of the KISS1 gene product.',
-      description:
-        'A 10-amino-acid fragment of the kisspeptin family, encoded by the KISS1 gene. ' +
-        'Studied in reproductive-endocrinology and GnRH-signalling models.',
-      sizes: [{ label: '5mg', price: 59.99, stock: 'in' }],
-      pairsWith: ['oxytocin', 'cjc-1295'],
-      researchRefs: ['[REF PLACEHOLDER] KISS1 / GnRH signalling literature — add verified citation'],
-    },
-    {
-      id: 'oxytocin', name: 'Oxytocin', category: 'peptide', goals: ['cognition'],
-      purity: '≥99%', badges: [],
-      blurb: 'Nine-amino-acid cyclic neuropeptide.',
-      description:
-        'A cyclic nonapeptide neurohypophysial hormone. ' +
-        'Appears extensively in social-behaviour and receptor-binding research models.',
-      sizes: [{ label: '2mg', price: 44.99, stock: 'in' }],
-      pairsWith: ['kisspeptin', 'dsip'],
-      researchRefs: ['[REF PLACEHOLDER] Oxytocin receptor-binding literature — add verified citation'],
-    },
-    {
-      id: 'bac-water', name: 'Bacteriostatic Water', category: 'supply', goals: [],
-      purity: '0.9% benzyl alcohol', badges: ['essential'],
-      blurb: 'Sterile water with 0.9% benzyl alcohol, 10ml multi-dose vial.',
-      description:
-        'Sterile bacteriostatic water containing 0.9% benzyl alcohol as a preservative. ' +
-        'Standard laboratory diluent for reconstituting lyophilised peptides. Multi-dose 10ml vial.',
-      sizes: [{ label: '10ml', price: 9.99, stock: 'in' }, { label: '10ml × 3', price: 24.99, stock: 'in' }],
-      pairsWith: [],
-      researchRefs: [],
-    },
-    {
       id: 'lab-kit', name: 'Reconstitution Kit', category: 'supply', goals: [],
-      purity: 'Sterile', badges: [],
+      purity: 'Sterile', badges: [], sequence: '',
       blurb: 'Alcohol swabs, sterile syringes and vial adapters for laboratory handling.',
       description:
         'Laboratory consumables bundle: 100 alcohol prep swabs, 100 sterile 1ml graduated syringes with 29g needles, ' +
         'and a sharps container. For laboratory handling of research materials.',
-      sizes: [{ label: 'Kit', price: 29.99, stock: 'in' }],
+      sizes: [{ label: 'Kit', price: 29.99, stock: 'out' }],
       pairsWith: ['bac-water'],
       researchRefs: [],
     },
@@ -451,10 +627,10 @@ const BIZ = {
       blurb: 'Dermal and redox research compounds, grouped as they commonly appear in cosmetic-science literature.',
     },
     {
-      id: 'stack-gh', name: 'CJC-1295 / Ipamorelin', discountPct: 10,
-      productIds: ['cjc-1295', 'ipamorelin'],
-      goal: 'growth',
-      blurb: 'The classic GHRH-analogue and secretagogue pairing used in comparative endocrine studies.',
+      id: 'stack-metabolic', name: 'Metabolic Stack', discountPct: 12,
+      productIds: ['mots-c', 'nad', 'glutathione'],
+      goal: 'metabolic',
+      blurb: 'Mitochondrial and redox research compounds, grouped as they appear together in energy-metabolism work.',
     },
     {
       id: 'stack-cognition', name: 'Cognition Stack', discountPct: 12,
@@ -480,7 +656,7 @@ const BIZ = {
       minutes: 4,
       summary: 'What the HPLC trace, mass spec result and batch identifiers on your COA actually tell you.',
       body: [
-        { h: 'What a COA is', p: 'A Certificate of Analysis is the independent lab’s report on a specific batch. It is batch-specific — a COA for one batch says nothing about another. Every BioHack Gold batch is tested by ' + 'an independent analytical lab and the report is published against the batch number printed on your vial.' },
+        { h: 'What a COA is', p: 'A Certificate of Analysis is the analytical report on a specific batch of material. It is batch-specific — a COA for one batch says nothing about another. Our batches are tested by an independent analytical laboratory, and the report is tied to the batch number printed on your vial. Ask and we will send you the COA for the batch you were shipped.' },
         { h: 'The HPLC trace', p: 'High-performance liquid chromatography separates the sample into its components. You are looking for one dominant peak. The purity figure is the area of that peak as a percentage of total peak area. A trace with several significant peaks indicates a less pure sample regardless of the headline number.' },
         { h: 'Mass spectrometry', p: 'Mass spec confirms identity rather than purity: it measures the molecular weight of what is in the vial and compares it to the theoretical weight of the sequence. A match confirms you have the compound the label claims.' },
         { h: 'Matching the batch', p: 'Check that the batch number on the COA matches the batch number on the vial label. If they do not match, the report does not describe your material. Every batch we dispatch is traceable this way.' },
@@ -531,9 +707,29 @@ const BIZ = {
    Derived lookups + small helpers
    ========================================================================== */
 
+/* Resolves a media path against BIZ.assetBase. Anything already absolute — or
+   a data: URI — is returned untouched. */
+const asset = path => {
+  if (!path) return path
+  if (/^([a-z]+:)?\/\//i.test(path) || path.startsWith('data:')) return path
+  const base = BIZ.assetBase || './'
+  return base + path.replace(/^\.\//, '')
+}
+
 const PRODUCTS = Object.fromEntries(BIZ.products.map(p => [p.id, p]))
 const money = n => '£' + Number(n).toFixed(2)
 const cx = (...a) => a.filter(Boolean).join(' ')
+
+/* --- Stock ----------------------------------------------------------------
+   A size is sellable when its `stock` is 'in'. Everything that can put a line
+   in the cart goes through these, so an out-of-stock vial cannot be reached by
+   a stack, a builder tick, a "pairs with" suggestion or a reorder. The product
+   stays visible either way — the range should read as complete.             */
+const sizeInStock = s => s?.stock !== 'out'
+const inStockSizes = p => (p?.sizes || []).filter(sizeInStock)
+const isSellable = p => inStockSizes(p).length > 0
+const defaultSize = p => inStockSizes(p)[0] || p?.sizes?.[0]
+const stackAvailable = stack => (stack?.productIds || []).every(id => isSellable(PRODUCTS[id]))
 
 const LS = {
   get(key, fallback) {
@@ -562,7 +758,8 @@ function priceOf(productId, sizeLabel) {
   return s ? s.price : 0
 }
 function fromPrice(p) {
-  return Math.min(...p.sizes.map(s => s.price))
+  const sizes = inStockSizes(p).length ? inStockSizes(p) : p.sizes
+  return Math.min(...sizes.map(s => s.price))
 }
 function stackMath(stack) {
   const full = stack.productIds.reduce((a, id) => a + fromPrice(PRODUCTS[id]), 0)
@@ -656,14 +853,69 @@ const skuFor = (productId, size) =>
     .replace(/[^A-Z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
 
+/* Returns the order store's own answer, or null if the order did not land.
+   The answer matters, not just the fact of a 200: it carries the reference the
+   store actually recorded and whether the confirmation email really went out.
+   Claiming either without checking is how a customer ends up paying with a
+   reference nobody can match. */
+/* Overlays live price and stock from the order store onto the built-in
+   catalogue, and reports how many sizes changed.
+
+   The shop must work as a flat file with no network — that is the whole point
+   of hardcoding the catalogue — so every failure path here is "leave the
+   built-in prices alone and carry on", never an error on screen.
+
+   It mutates BIZ.products in place rather than threading a second catalogue
+   through every component. That is deliberate: prices are read from PRODUCTS in
+   a dozen places, and a parallel source of truth is how a cart ends up totalled
+   at one price and charged at another. The caller re-renders once afterwards.  */
+async function applyLiveCatalogue() {
+  const ep = BIZ.orders?.catalogueEndpoint
+  if (!ep) return 0
+  try {
+    const res = await fetch(ep, { headers: { Accept: 'application/json' } })
+    if (!res.ok) return 0
+    const data = await res.json()
+    if (!data?.ok || !Array.isArray(data.items) || data.items.length === 0) return 0
+
+    const bySku = new Map(data.items.map(i => [String(i.sku).toUpperCase(), i]))
+
+    /* If the feed says nothing at all is sellable, something is wrong at the
+       other end — a half-finished edit, a bad seed. An empty shop is worse than
+       a slightly stale one, so ignore it. */
+    if (!data.items.some(i => i.available)) return 0
+
+    let changed = 0
+    for (const p of BIZ.products) {
+      for (const size of p.sizes) {
+        const hit = bySku.get(skuFor(p.id, size.label))
+        if (!hit) continue
+        const price = Math.round(Number(hit.price_pence)) / 100
+        const stock = hit.available ? 'in' : 'out'
+        if (!(price > 0)) continue                 // a zero price is a mistake, not a sale
+        if (size.price !== price || size.stock !== stock) changed++
+        size.price = price
+        size.stock = stock
+      }
+    }
+    return changed
+  } catch {
+    return 0
+  }
+}
+
 async function deliverOrder(order) {
   const ep = BIZ.orders?.endpoint
-  if (!ep) return false
+  if (!ep) return null
   try {
     const res = await fetch(ep, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
+        /* Our reference, generated before this call so it can be shown the
+           moment the order is placed. The store adopts it when it is unused and
+           tells us in the response which reference it actually kept. */
+        ref: order.ref,
         /* Money crosses the wire in PENCE as whole numbers. The endpoint
            re-prices every line from its own catalogue and recomputes the total
            regardless — these figures are what the customer was *shown*, and a
@@ -687,9 +939,11 @@ async function deliverOrder(order) {
         source: 'site',
       }),
     })
-    return res.ok
+    if (!res.ok) return null
+    const data = await res.json().catch(() => ({}))
+    return data?.ok ? data : null
   } catch {
-    return false   // offline, blocked, or a bad endpoint — the fallback covers it
+    return null   // offline, blocked, or a bad endpoint — the fallback covers it
   }
 }
 
@@ -727,7 +981,15 @@ function computeCart(cart) {
     out.count += lines.reduce((a, l) => a + l.qty, 0)
   }
   out.groups.sort((a, b) => (a.kind === 'loose' ? 1 : 0) - (b.kind === 'loose' ? 1 : 0))
-  out.total = out.subtotal - out.discount
+
+  /* Goods first, then delivery. The free-delivery threshold is judged on what
+     the customer actually pays for goods (after any stack discount), which is
+     the same basis the server uses. */
+  out.goods = out.subtotal - out.discount
+  const { fee = 0, freeOver = 0 } = BIZ.shipping || {}
+  out.shipping = out.goods > 0 && out.goods < freeOver ? fee : 0
+  out.freeGap = out.goods > 0 ? Math.max(0, freeOver - out.goods) : freeOver
+  out.total = out.goods + out.shipping
   return out
 }
 
@@ -848,6 +1110,7 @@ input, select, textarea { font:inherit; }
 .btn-block { width:100%; }
 .btn-sm { padding:9px 13px; font-size:13px; border-radius:10px; }
 .btn[disabled] { opacity:.42; pointer-events:none; }
+.seq { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; letter-spacing:.01em; word-break:break-all; text-align:right; }
 .btn-ghost { background:transparent; }
 
 /* ---------- cinematic hero ---------- */
@@ -955,6 +1218,62 @@ video::-webkit-media-controls-overlay-play-button {
 .card-tags { position:absolute; top:9px; left:9px; display:flex; gap:5px; flex-wrap:wrap; }
 
 /* ---------- filters ---------- */
+/* ---------- order tracking ---------- */
+.track { display:flex; align-items:flex-start; margin:16px 0 4px; }
+.track-step { flex:1; position:relative; display:flex; flex-direction:column; align-items:center; }
+.track-step:last-child { flex:none; }
+.track-dot {
+  width:22px; height:22px; border-radius:50%; display:grid; place-items:center;
+  border:2px solid var(--border); background:var(--surfaceAlt); color:#14120C; z-index:1;
+}
+.track-dot.on { border-color:var(--primary); background:var(--primary); }
+.track-label { font-size:10.5px; margin-top:6px; color:var(--muted); text-align:center; white-space:nowrap; }
+.track-label.on { color:var(--text); font-weight:600; }
+.track-bar { position:absolute; top:10px; left:50%; width:100%; height:2px; background:var(--border); }
+.track-bar.on { background:var(--primary); }
+.linkish { color:var(--primary); font-weight:600; text-decoration:underline; text-underline-offset:2px; }
+
+/* ---------- pay-by-bank rails + QR ---------- */
+.rails { display:flex; gap:8px; margin-top:12px; }
+.rail {
+  flex:1; padding:10px 12px; border-radius:12px; font-size:13px; font-weight:650;
+  border:1px solid var(--border); background:var(--surface); color:var(--muted); transition:.15s;
+}
+.rail.on {
+  border-color:color-mix(in srgb, var(--primary) 60%, transparent);
+  background:color-mix(in srgb, var(--primary) 12%, var(--surface)); color:var(--primary);
+}
+.qrrow {
+  display:flex; gap:14px; align-items:flex-start; padding-bottom:12px; margin-bottom:4px;
+  border-bottom:1px solid var(--border);
+}
+
+/* ---------- age gate ---------- */
+.agegate {
+  position:fixed; inset:0; z-index:120; display:flex; align-items:center; justify-content:center;
+  padding:20px; background:rgba(6,6,8,.88); backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px);
+  animation:fade .28s ease both;
+}
+.agegate-card {
+  width:100%; max-width:380px; text-align:center; padding:28px 22px 22px;
+  background:var(--surface); border:1px solid var(--border); border-radius:20px;
+  box-shadow:0 30px 70px rgba(0,0,0,.6);
+}
+
+/* ---------- catalogue search ---------- */
+.searchrow {
+  display:flex; align-items:center; gap:9px; margin:2px 0 12px; padding:0 13px;
+  background:var(--surface); border:1px solid var(--border); border-radius:12px; color:var(--muted);
+}
+.searchrow:focus-within { border-color:color-mix(in srgb, var(--primary) 55%, var(--border)); }
+.searchinput {
+  flex:1; min-width:0; background:none; border:0; outline:none; color:var(--text);
+  font:inherit; font-size:14px; padding:11px 0;
+}
+.searchinput::placeholder { color:var(--muted); }
+.searchinput::-webkit-search-cancel-button { display:none; }
+.searchclear { flex:none; color:var(--muted); padding:4px; display:flex; }
+
 .filters { display:flex; gap:7px; overflow-x:auto; padding:3px 0 12px; scrollbar-width:none; -ms-overflow-style:none; }
 .filters::-webkit-scrollbar { display:none; }
 .filter {
@@ -1263,6 +1582,7 @@ video::-webkit-media-controls-overlay-play-button {
    ========================================================================== */
 
 const I = {
+  search: p => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" {...p}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.6-3.6" /></svg>,
   home: p => <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V20h14V9.5" /></svg>,
   shop: p => <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" {...p}><rect x="3" y="7" width="18" height="14" rx="2.5" /><path d="M8.5 7V5.5a3.5 3.5 0 0 1 7 0V7" /></svg>,
   stacks: p => <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" {...p}><path d="M12 3 3 7.5l9 4.5 9-4.5L12 3Z" /><path d="m3 12.5 9 4.5 9-4.5" /><path d="m3 17 9 4.5 9-4.5" /></svg>,
@@ -1329,6 +1649,7 @@ function Vial({ label, hue = 44, size = 132, dim = false }) {
 const GOAL_HUE = {
   recovery: 150, growth: 44, metabolic: 24, cognition: 265,
   cosmetic: 330, sleep: 225, immune: 190, longevity: 82,
+  neuroendocrine: 300,
 }
 const hueFor = p => GOAL_HUE[p.goals?.[0]] ?? 44
 
@@ -1337,17 +1658,18 @@ const hueFor = p => GOAL_HUE[p.goals?.[0]] ?? 44
 const GOAL_SHOT = {
   recovery: 'green', growth: 'gold', metabolic: 'gold', longevity: 'ice',
   immune: 'ice', cognition: 'violet', sleep: 'violet', cosmetic: 'violet',
+  neuroendocrine: 'violet',
 }
 
 /* Short enough to sit on a vial label without shrinking to nothing. */
 const GOAL_CODE = {
   recovery: 'RECOVERY', growth: 'GROWTH', metabolic: 'METABOLIC',
   cognition: 'COGNITION', cosmetic: 'COSMETIC', sleep: 'SLEEP',
-  immune: 'IMMUNE', longevity: 'LONGEVITY',
+  immune: 'IMMUNE', longevity: 'LONGEVITY', neuroendocrine: 'NEURO',
 }
 const shotKeyFor = p => p.shot || GOAL_SHOT[p.goals?.[0]] || 'gold'
-const shotFor = p => BIZ.media?.shots?.[shotKeyFor(p)]
-const wetShotFor = p => BIZ.media?.shotsWet?.[shotKeyFor(p)]
+const shotFor = p => asset(BIZ.media?.shots?.[shotKeyFor(p)])
+const wetShotFor = p => asset(BIZ.media?.shotsWet?.[shotKeyFor(p)])
 
 /* Product artwork: the generated still if it loaded, the drawn vial if not.
    No layout shift either way — both fill the same box. */
@@ -1398,6 +1720,48 @@ function ReconstituteVisual({ product }) {
    Shared bits
    ========================================================================== */
 
+/* A QR of the payment details as plain text.
+
+   It is NOT a payment link. The UK has no universal bank-transfer QR scheme —
+   the old shop encoded a `pay.uk/transfer?...` URL that goes nowhere — so this
+   encodes the details themselves. Scanning it with a phone camera puts the
+   payee, amount and reference on the screen you are about to type them into,
+   which is the real job when you are checking out on a laptop. The caption says
+   exactly that and promises nothing more.
+
+   Light background, dark modules: a gold-on-black QR looks better and scans
+   worse, and a code that does not scan is just decoration. */
+function PayQR({ text, size = 128 }) {
+  const code = useMemo(() => {
+    try {
+      const q = qrcode(0, 'M')      // auto version, medium error correction
+      q.addData(text)
+      q.make()
+      const n = q.getModuleCount()
+      let d = ''
+      for (let r = 0; r < n; r++) {
+        for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += `M${c} ${r}h1v1h-1z`
+      }
+      return { d, n }
+    } catch {
+      return null                   // payload too long for any version — skip it
+    }
+  }, [text])
+
+  if (!code) return null
+  const quiet = 3                   // the spec's quiet zone; scanners need it
+  const span = code.n + quiet * 2
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${span} ${span}`} role="img"
+      aria-label="QR code containing the payment details" shapeRendering="crispEdges"
+      style={{ borderRadius: 10, flex: 'none' }}>
+      <rect width={span} height={span} fill="#F3F0E9" />
+      <g transform={`translate(${quiet} ${quiet})`} fill="#14120C"><path d={code.d} /></g>
+    </svg>
+  )
+}
+
 function Chip({ kind = 'gold', children }) {
   return <span className={`chip chip-${kind}`}>{children}</span>
 }
@@ -1407,7 +1771,7 @@ function BrandMark({ size = 28 }) {
   const [failed, setFailed] = useState(false)
   if (!BIZ.logo || failed) return <span className="brand-mark">{BIZ.shortName}</span>
   return (
-    <img src={BIZ.logo} alt="" width={size} height={size} onError={() => setFailed(true)}
+    <img src={asset(BIZ.logo)} alt="" width={size} height={size} onError={() => setFailed(true)}
       style={{ display: 'block', flex: 'none' }} />
   )
 }
@@ -1495,7 +1859,8 @@ function HeroMedia({ onState }) {
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (reduced) { setCycles([]); return }
     const mobile = window.matchMedia('(max-width: 768px)').matches
-    const defs = (mobile && M.cyclesMobile?.length ? M.cyclesMobile : M.cycles) || []
+    const defs = ((mobile && M.cyclesMobile?.length ? M.cyclesMobile : M.cycles) || [])
+      .map(clips => clips.map(asset))
     let off = false
     const exists = url => fetch(url, { method: 'HEAD' }).then(r => r.ok).catch(() => false)
     Promise.all(defs.map(clips =>
@@ -1589,17 +1954,17 @@ function HeroMedia({ onState }) {
 
   return (
     <div className="hero-media" aria-hidden="true">
-      <div className="hero-still" style={{ backgroundImage: `url("${M.poster}")` }} />
+      <div className="hero-still" style={{ backgroundImage: `url("${asset(M.poster)}")` }} />
       {live && (
         <>
           <video
             ref={videoRef} className="hero-video"
-            muted playsInline preload="auto" poster={M.poster}
+            muted playsInline preload="auto" poster={asset(M.poster)}
             disablePictureInPicture disableRemotePlayback
             controlsList="nodownload noplaybackrate noremoteplayback"
           />
           <canvas ref={freezeRef} className="hero-freeze" />
-          {M.ambience && <audio ref={ambRef} loop preload="none" src={M.ambience} />}
+          {M.ambience && <audio ref={ambRef} loop preload="none" src={asset(M.ambience)} />}
         </>
       )}
       <div className="hero-scrim" />
@@ -1617,7 +1982,7 @@ function HeroMedia({ onState }) {
 }
 
 function Landing({ go, openProduct, addStack }) {
-  const bestsellers = BIZ.products.filter(p => p.badges?.includes('bestseller')).slice(0, 4)
+  const bestsellers = BIZ.products.filter(p => p.badges?.includes('bestseller') && isSellable(p)).slice(0, 4)
   const featured = BIZ.stacks.slice(0, 3)
   return (
     <div className="view">
@@ -1625,11 +1990,11 @@ function Landing({ go, openProduct, addStack }) {
       <section className="hero-cinema">
         <HeroMedia />
         <div className="wrap hero-copy">
-          <span className="verify-pill">{I.shield({ width: 14, height: 14 })} Independently verified by {BIZ.labPartner}</span>
+          <span className="verify-pill">{I.shield({ width: 14, height: 14 })} Independently tested, batch by batch</span>
           <h1>Research-grade peptides,<br /><em>verified to the batch.</em></h1>
           <p className="sub">
             Every batch tested by an independent laboratory, dispatched cold from London, and traceable to a
-            Certificate of Analysis you can read before you order.
+            Certificate of Analysis tied to the batch number printed on your vial.
           </p>
           <div className="hero-cta">
             <button className="btn btn-primary" onClick={() => go('catalogue')}>Browse catalogue {I.chev({ width: 15, height: 15 })}</button>
@@ -1728,6 +2093,8 @@ function Landing({ go, openProduct, addStack }) {
 function StackCard({ stack, onAdd, onOpen, feature }) {
   const m = stackMath(stack)
   const items = stack.productIds.map(id => PRODUCTS[id]).filter(Boolean)
+  const available = stackAvailable(stack)
+  const missing = items.filter(p => !isSellable(p))
   return (
     <div className={cx('stackcard', feature && 'feature')}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
@@ -1756,10 +2123,14 @@ function StackCard({ stack, onAdd, onOpen, feature }) {
             <span className="price" style={{ fontSize: 18 }}>{money(m.now)}</span>
             <span className="was">{money(m.full)}</span>
           </div>
-          <div className="tiny" style={{ color: 'var(--primary)', fontWeight: 650 }}>You save {money(m.saving)}</div>
+          {available
+            ? <div className="tiny" style={{ color: 'var(--primary)', fontWeight: 650 }}>You save {money(m.saving)}</div>
+            : <div className="tiny muted">Waiting on {missing.map(p => p.name).join(', ')}</div>}
         </div>
         <div className="spacer" />
-        <button className="btn btn-primary btn-sm" onClick={() => onAdd(stack)}>Add stack</button>
+        <button className="btn btn-primary btn-sm" disabled={!available} onClick={() => available && onAdd(stack)}>
+          {available ? 'Add stack' : 'Out of stock'}
+        </button>
       </div>
     </div>
   )
@@ -1767,18 +2138,43 @@ function StackCard({ stack, onAdd, onOpen, feature }) {
 
 function Catalogue({ openProduct }) {
   const [goal, setGoal] = useState('all')
+  const [q, setQ] = useState('')
+
   const list = useMemo(() => {
-    if (goal === 'all') return BIZ.products
-    if (goal === 'supply') return BIZ.products.filter(p => p.category === 'supply')
-    return BIZ.products.filter(p => p.goals?.includes(goal))
-  }, [goal])
+    const byGoal =
+      goal === 'all' ? BIZ.products
+        : goal === 'supply' ? BIZ.products.filter(p => p.category === 'supply')
+          : BIZ.products.filter(p => p.goals?.includes(goal))
+
+    const needle = q.trim().toLowerCase()
+    const matched = !needle ? byGoal : byGoal.filter(p =>
+      [p.name, p.blurb, p.description, ...(p.goals || [])].join(' ').toLowerCase().includes(needle))
+
+    /* What we hold comes first. Sorting rather than hiding keeps the range
+       looking complete while never leading with something nobody can buy. */
+    return [...matched].sort((a, b) => Number(isSellable(b)) - Number(isSellable(a)))
+  }, [goal, q])
 
   return (
     <div className="view wrap">
       <section className="section" style={{ paddingBottom: 4 }}>
-        <div className="eyebrow">{BIZ.products.length} compounds in stock</div>
+        <div className="eyebrow">Research compounds</div>
         <h2 style={{ fontSize: 24 }}>Catalogue</h2>
       </section>
+
+      <div className="searchrow">
+        {I.search({ width: 15, height: 15 })}
+        <input
+          className="searchinput"
+          type="search"
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          placeholder="Search compounds…"
+          aria-label="Search compounds"
+        />
+        {q && <button className="searchclear" onClick={() => setQ('')} aria-label="Clear search">{I.close({ width: 14, height: 14 })}</button>}
+      </div>
+
       <div className="filters">
         <button className={cx('filter', goal === 'all' && 'on')} onClick={() => setGoal('all')}>All</button>
         {BIZ.goals.map(g => (
@@ -1789,18 +2185,20 @@ function Catalogue({ openProduct }) {
       <div className="grid" style={{ paddingBottom: 26 }}>
         {list.map(p => <ProductCard key={p.id} product={p} onOpen={openProduct} />)}
       </div>
-      {list.length === 0 && <div className="empty">Nothing in this research area yet.</div>}
+      {list.length === 0 && (
+        <div className="empty">{q ? <>Nothing matches “{q}”.</> : 'Nothing in this research area yet.'}</div>
+      )}
     </div>
   )
 }
 
 function ProductView({ id, back, backLabel = 'Back', openProduct, addLine, toast }) {
   const p = PRODUCTS[id]
-  const [size, setSize] = useState(p?.sizes[0]?.label)
+  const [size, setSize] = useState(defaultSize(p)?.label)
   const [qty, setQty] = useState(1)
-  useEffect(() => { setSize(PRODUCTS[id]?.sizes[0]?.label); setQty(1) }, [id])
+  useEffect(() => { setSize(defaultSize(PRODUCTS[id])?.label); setQty(1) }, [id])
   if (!p) return <div className="wrap empty">Product not found.</div>
-  const sel = p.sizes.find(s => s.label === size) || p.sizes[0]
+  const sel = p.sizes.find(s => s.label === size) || defaultSize(p)
   const pairs = (p.pairsWith || []).map(x => PRODUCTS[x]).filter(Boolean)
 
   return (
@@ -1835,6 +2233,9 @@ function ProductView({ id, back, backLabel = 'Back', openProduct, addLine, toast
 
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, margin: '20px 0 12px' }}>
             <span className="price" style={{ fontSize: 26 }}>{money(sel.price * qty)}</span>
+            {/* `was` is only ever set from a price this vial genuinely sold at.
+                Never populate it to manufacture a discount. */}
+            {sel.was > sel.price && <span className="was">{money(sel.was * qty)}</span>}
             {qty > 1 && <span className="tiny muted">{money(sel.price)} each</span>}
           </div>
 
@@ -1855,7 +2256,7 @@ function ProductView({ id, back, backLabel = 'Back', openProduct, addLine, toast
             </button>
           </div>
           <p className="tiny muted" style={{ marginTop: 4 }}>
-            Dispatched cold within 24 hours · COA supplied with every batch
+            Dispatched cold within 24 hours · Third-party COA on every batch
           </p>
         </div>
       </div>
@@ -1884,9 +2285,14 @@ function ProductView({ id, back, backLabel = 'Back', openProduct, addLine, toast
         <h3 style={{ fontSize: 17, marginBottom: 10 }}>Specification</h3>
         <div className="panel">
           <div className="rowline"><span className="muted">Purity</span><b>{p.purity}</b></div>
-          <div className="rowline"><span className="muted">Verification</span><b>HPLC & Mass Spec</b></div>
-          <div className="rowline"><span className="muted">Testing lab</span><b>{BIZ.labPartner}</b></div>
+          <div className="rowline"><span className="muted">Verification</span><b>HPLC &amp; Mass Spec</b></div>
+          <div className="rowline"><span className="muted">Testing</span><b>{BIZ.labPartner || 'Independent laboratory'}</b></div>
           <div className="rowline"><span className="muted">Form</span><b>{p.category === 'supply' ? 'Solution' : 'Lyophilised powder'}</b></div>
+          {/* Only shown once a real sequence is on file — an invented one would
+              be a false claim about what is in the vial. */}
+          {p.sequence
+            ? <div className="rowline"><span className="muted">Sequence</span><b className="seq">{p.sequence}</b></div>
+            : null}
           <div className="rowline"><span className="muted">Storage</span><b>Refrigerated, dry</b></div>
         </div>
       </section>
@@ -1971,14 +2377,14 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
   const toggle = id => setSel(prev => {
     const next = { ...prev }
     if (next[id]) delete next[id]
-    else next[id] = PRODUCTS[id].sizes[0].label
+    else next[id] = defaultSize(PRODUCTS[id]).label
     return next
   })
 
   const startFrom = stack => {
     setSel(prev => {
       const next = { ...prev }
-      stack.productIds.forEach(id => { if (!next[id]) next[id] = PRODUCTS[id].sizes[0].label })
+      stack.productIds.forEach(id => { if (!next[id]) next[id] = defaultSize(PRODUCTS[id]).label })
       return next
     })
     toast(`${stack.name} loaded — add more to climb the tiers`)
@@ -1993,8 +2399,10 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
 
   const areas = useMemo(() => BIZ.goals.map(g => ({
     ...g,
-    items: BIZ.products.filter(p => p.goals?.includes(g.id)),
-    stacks: BIZ.stacks.filter(s => s.goal === g.id),
+    /* Only what we can actually sell: a builder that offers an out-of-stock
+       vial produces a stack that cannot be added. */
+    items: BIZ.products.filter(p => p.goals?.includes(g.id) && isSellable(p)),
+    stacks: BIZ.stacks.filter(s => s.goal === g.id && stackAvailable(s)),
   })).filter(a => a.items.length), [])
 
   const dock = distinct > 0 && (
@@ -2060,7 +2468,7 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
             </span>
             <span className="goal-text">
               <h3>Show everything</h3>
-              <span className="goal-meta">All {BIZ.products.filter(p => p.goals?.length).length} compounds</span>
+              <span className="goal-meta">Every research area</span>
             </span>
           </button>
         </div>
@@ -2073,8 +2481,8 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
   /* ---------- step 2: the area ---------- */
   const area = areas.find(a => a.id === goal)
   const showAll = goal === 'all'
-  const items = showAll ? BIZ.products.filter(p => p.goals?.length) : (area?.items || [])
-  const stacks = showAll ? BIZ.stacks : (area?.stacks || [])
+  const items = showAll ? BIZ.products.filter(p => p.goals?.length && isSellable(p)) : (area?.items || [])
+  const stacks = showAll ? BIZ.stacks.filter(stackAvailable) : (area?.stacks || [])
   const label = showAll ? 'Everything' : (area?.label || '')
 
   /* Compounds from OTHER areas that belong on screen: partners of the current
@@ -2094,7 +2502,7 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
     }
     if (!items.some(p => p.id === id)) elsewhereIds.add(id)
   }
-  const elsewhere = BIZ.products.filter(p => elsewhereIds.has(p.id))
+  const elsewhere = BIZ.products.filter(p => elsewhereIds.has(p.id) && isSellable(p))
 
   /* Name and price alone are no basis for deciding whether a compound belongs
      in a stack. Each row carries what it actually is, and an info button into
@@ -2102,7 +2510,7 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
   const Row = ({ p }) => {
     const on = !!sel[p.id]
     const sug = !on && suggested.has(p.id)
-    const size = sel[p.id] || p.sizes[0].label
+    const size = sel[p.id] || defaultSize(p).label
     return (
       <div className={cx('build-row', on && 'on', sug && 'suggested')}>
         <button className="build-toggle" onClick={() => toggle(p.id)} aria-pressed={on}>
@@ -2218,7 +2626,7 @@ function Builder({ addBundle, toast, openProduct, goal, setGoal, sel, setSel }) 
   )
 }
 
-function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified, go, toast }) {
+function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified, confirmOrder, go, toast }) {
   const [step, setStep] = useState(0)
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
@@ -2232,6 +2640,8 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
   const [errors, setErrors] = useState({})
   const [order, setOrder] = useState(null)
   const [copied, setCopied] = useState('')
+  const [rail, setRail] = useState(BIZ.bank.rails?.[0]?.id)
+  const activeRail = BIZ.bank.rails?.find(r => r.id === rail) || BIZ.bank.rails?.[0] || { label: 'your bank', bankName: '' }
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -2258,10 +2668,16 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
     // `sent` stays false and the screen asks the customer to send it instead —
     // it must never claim to have done something it hasn't.
     setSending(true)
-    deliverOrder(o).then(ok => {
+    deliverOrder(o).then(result => {
       setSending(false)
-      setSent(ok)
-      if (ok) markNotified(o.ref)
+      setSent(!!result)
+      if (!result) return
+      const patch = {
+        ref: result.ref || o.ref,
+        emailed: !!result.emailed,
+      }
+      confirmOrder(o.ref, patch)
+      setOrder(prev => ({ ...prev, ...patch }))
     })
   }
 
@@ -2318,8 +2734,16 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
               <div className="rowline"><span style={{ color: 'var(--primary)' }}>Stack discount</span>
                 <span style={{ color: 'var(--primary)' }}>−{money(calc.discount)}</span></div>
             )}
-            <div className="rowline"><span className="muted">Delivery</span><span>Free · next-day tracked</span></div>
+            <div className="rowline">
+              <span className="muted">Delivery</span>
+              <span>{calc.shipping > 0 ? money(calc.shipping) : <b style={{ color: 'var(--good)' }}>Free</b>}</span>
+            </div>
             <div className="rowline"><b>Total</b><b className="price">{money(calc.total)}</b></div>
+            {calc.freeGap > 0 && (
+              <p className="tiny muted" style={{ marginTop: 8 }}>
+                Add {money(calc.freeGap)} more and delivery is free.
+              </p>
+            )}
           </div>
           <button className="btn btn-primary btn-block" style={{ marginTop: 16 }} onClick={() => setStep(1)}>Continue</button>
         </>
@@ -2397,6 +2821,14 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
               Send {money(order.total)} using the details below. Quote the reference exactly — it is how your payment
               is matched to your order automatically.
             </p>
+            {/* Only claimed when the order store says the email actually went.
+                An unsent confirmation the screen swears it sent is how someone
+                waits three days for an email that never existed. */}
+            {order.emailed && (
+              <p className="tiny muted" style={{ marginTop: 8 }}>
+                These details are also in your inbox at {order.customer?.email}.
+              </p>
+            )}
           </div>
 
 
@@ -2423,10 +2855,34 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
             </div>
           )}
 
+          {/* Which app they are paying from. Both rails are the same account —
+              see BIZ.bank.rails. */}
+          {BIZ.bank.rails?.length > 1 && (
+            <div className="rails">
+              {BIZ.bank.rails.map(r => (
+                <button key={r.id} className={cx('rail', rail === r.id && 'on')} onClick={() => setRail(r.id)}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="panel" style={{ marginTop: 12 }}>
             {BIZ.payments?.pisp?.createUrl && (
               <p className="tiny muted" style={{ marginBottom: 4 }}>Or transfer manually:</p>
             )}
+
+            <div className="qrrow">
+              <PayQR text={paymentDetailsText(order)} />
+              <div>
+                <div className="k">Paying from your phone?</div>
+                <p className="tiny muted" style={{ marginTop: 5, lineHeight: 1.5 }}>
+                  Scan this with your camera to read the payee, amount and reference off the screen — then type
+                  them into {activeRail.label}. It is not a payment link: no UK bank accepts one.
+                </p>
+              </div>
+            </div>
+
             <div className="bankrow">
               <div><div className="k">Amount</div><div className="v price">{money(order.total)}</div></div>
               <button className={cx('copybtn', copied === 'amt' && 'done')} onClick={() => copy('amt', order.total.toFixed(2))}>
@@ -2457,6 +2913,9 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
                 {copied === 'ac' ? 'Copied' : 'Copy'}
               </button>
             </div>
+            <div className="bankrow">
+              <div><div className="k">Bank</div><div className="v">{activeRail.bankName}</div></div>
+            </div>
           </div>
 
           {/* One tap for the lot — payee, sort code, account, amount, reference. */}
@@ -2472,8 +2931,8 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
             onClick={() => { go('account'); toast('Order saved to your account') }}>
             I've sent the payment
           </button>
-          <button className="btn btn-block btn-ghost" style={{ marginTop: 9 }} onClick={() => go('account')}>
-            View order status
+          <button className="btn btn-block btn-ghost" style={{ marginTop: 9 }} onClick={() => go('track')}>
+            Check order status
           </button>
           <p className="tiny muted" style={{ marginTop: 14, textAlign: 'center', lineHeight: 1.6 }}>
             Keep your reference — <b className="mono" style={{ color: 'var(--primary)' }}>{order.ref}</b>. It is also
@@ -2488,8 +2947,19 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
 
 function Account({ orders, customer, reorder, go, toast }) {
   const [open, setOpen] = useState(null)
-  const statusLabel = { awaiting_payment: 'Awaiting payment', paid: 'Payment received', fulfilled: 'Dispatched', cancelled: 'Cancelled' }
-  const statusClass = { awaiting_payment: 'awaiting', paid: 'paid', fulfilled: 'fulfilled', cancelled: 'cancelled' }
+  /* Local orders start at awaiting_payment; the rest of these are the order
+     store's own states, so a synced order reads the same here as it does in the
+     ops hub. Keep this in step with the Order entity's status enum. */
+  const statusLabel = {
+    awaiting_payment: 'Awaiting payment', paid: 'Payment received', picking: 'Being packed',
+    dispatched: 'Dispatched', fulfilled: 'Dispatched', delivered: 'Delivered',
+    cancelled: 'Cancelled', refunded: 'Refunded',
+  }
+  const statusClass = {
+    awaiting_payment: 'awaiting', paid: 'paid', picking: 'paid',
+    dispatched: 'fulfilled', fulfilled: 'fulfilled', delivered: 'fulfilled',
+    cancelled: 'cancelled', refunded: 'cancelled',
+  }
 
   return (
     <div className="view wrap" style={{ maxWidth: 720 }}>
@@ -2501,8 +2971,11 @@ function Account({ orders, customer, reorder, go, toast }) {
 
       {orders.length === 0 ? (
         <div className="empty">
-          <p>No orders yet.</p>
+          <p>No orders on this device.</p>
           <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => go('catalogue')}>Browse catalogue</button>
+          {/* Orders live in this browser's storage, so a different phone or a
+              cleared cache shows nothing. The lookup is the way back in. */}
+          <button className="btn" style={{ marginTop: 10 }} onClick={() => go('track')}>Track an order</button>
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingBottom: 20 }}>
@@ -2564,6 +3037,186 @@ function Account({ orders, customer, reorder, go, toast }) {
         <h3 style={{ fontSize: 16, marginBottom: 10 }}>Returns</h3>
         <div className="panel"><p className="small muted" style={{ lineHeight: 1.6 }}>{BIZ.returnsText}</p></div>
       </section>
+    </div>
+  )
+}
+
+/* ============================================================================
+   Order tracking.
+
+   Orders placed in this browser are already in Account. This exists for
+   everything else: the customer who ordered on a laptop and is checking on a
+   phone, who cleared their cookies, or who is chasing an order six weeks later.
+   It reads the order store directly, so it is the same truth Karl sees.
+   ========================================================================== */
+
+const TRACK_STEPS = [
+  { id: 'awaiting_payment', label: 'Placed' },
+  { id: 'paid', label: 'Paid' },
+  { id: 'picking', label: 'Packing' },
+  { id: 'dispatched', label: 'Dispatched' },
+  { id: 'delivered', label: 'Delivered' },
+]
+const TRACK_LABEL = {
+  awaiting_payment: 'Awaiting payment',
+  paid: 'Payment received',
+  picking: 'Being packed',
+  dispatched: 'Dispatched',
+  delivered: 'Delivered',
+  cancelled: 'Cancelled',
+  refunded: 'Refunded',
+}
+
+function TrackProgress({ status }) {
+  const idx = TRACK_STEPS.findIndex(s => s.id === status)
+  if (idx < 0) return null            // cancelled / refunded have no progress to show
+  return (
+    <div className="track">
+      {TRACK_STEPS.map((s, i) => (
+        <div className="track-step" key={s.id}>
+          <div className={cx('track-dot', i <= idx && 'on')}>{i < idx ? I.check({ width: 12, height: 12 }) : null}</div>
+          <div className={cx('track-label', i <= idx && 'on')}>{s.label}</div>
+          {i < TRACK_STEPS.length - 1 && <div className={cx('track-bar', i < idx && 'on')} />}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TrackView({ initialRef = '', initialEmail = '', go }) {
+  const [ref, setRef] = useState(initialRef)
+  const [email, setEmail] = useState(initialEmail)
+  const [state, setState] = useState('idle')   // idle | loading | found | missing | error
+  const [found, setFound] = useState(null)
+
+  const lookup = async e => {
+    e?.preventDefault()
+    const ep = BIZ.orders?.trackEndpoint
+    if (!ep || !ref.trim() || !email.trim()) return
+    setState('loading')
+    try {
+      const res = await fetch(ep, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ ref: ref.trim(), email: email.trim() }),
+      })
+      if (res.status === 404) { setFound(null); setState('missing'); return }
+      if (!res.ok) { setState('error'); return }
+      const data = await res.json()
+      setFound(data.order)
+      setState('found')
+    } catch {
+      setState('error')                       // offline or blocked — say so, don't guess
+    }
+  }
+
+  const p = n => money((Number(n) || 0) / 100)
+  const parcel = found?.deliveries?.[0]
+
+  return (
+    <div className="view wrap" style={{ maxWidth: 620 }}>
+      <section className="section" style={{ paddingBottom: 10 }}>
+        <div className="eyebrow">Order status</div>
+        <h2 style={{ fontSize: 23 }}>Track an order</h2>
+        <p className="small muted" style={{ marginTop: 8 }}>
+          Enter the reference from your confirmation and the email you ordered with.
+        </p>
+      </section>
+
+      <form className="panel" onSubmit={lookup}>
+        <div className="field">
+          <label htmlFor="track-ref">Order reference</label>
+          <input id="track-ref" className="input mono" value={ref} onChange={e => setRef(e.target.value)}
+            placeholder="BHG-…" autoCapitalize="characters" spellCheck="false" />
+        </div>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <label htmlFor="track-email">Email address</label>
+          <input id="track-email" className="input" type="email" value={email}
+            onChange={e => setEmail(e.target.value)} placeholder="you@example.com"
+            inputMode="email" autoComplete="email" />
+        </div>
+        <button className="btn btn-primary btn-block" style={{ marginTop: 14 }} type="submit"
+          disabled={state === 'loading' || !ref.trim() || !email.trim()}>
+          {state === 'loading' ? 'Looking…' : 'Find my order'}
+        </button>
+      </form>
+
+      {state === 'missing' && (
+        <div className="panel" style={{ marginTop: 12 }}>
+          <p className="small">No order matches that reference and email address.</p>
+          <p className="tiny muted" style={{ marginTop: 6 }}>
+            Check both against your confirmation. If you have just ordered, give it a minute.
+          </p>
+        </div>
+      )}
+
+      {state === 'error' && (
+        <div className="panel" style={{ marginTop: 12 }}>
+          <p className="small">We could not reach the order system just now.</p>
+          <p className="tiny muted" style={{ marginTop: 6 }}>
+            Try again in a moment, or email {BIZ.email} quoting your reference.
+          </p>
+        </div>
+      )}
+
+      {state === 'found' && found && (
+        <>
+          <div className="panel" style={{ marginTop: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <b className="mono" style={{ color: 'var(--primary)' }}>{found.ref}</b>
+              <div className="spacer" />
+              <span className="small">{TRACK_LABEL[found.status] || found.status}</span>
+            </div>
+            <TrackProgress status={found.status} />
+            {found.status === 'awaiting_payment' && (
+              <p className="tiny muted" style={{ marginTop: 10 }}>
+                We have not matched a payment to this order yet. Transfers usually show within a few hours;
+                quote {found.ref} as the reference so it can be matched.
+              </p>
+            )}
+            {found.amount_received_pence > 0 && found.amount_received_pence < found.total_pence && (
+              <p className="tiny" style={{ marginTop: 10, color: 'var(--warn)' }}>
+                We received {p(found.amount_received_pence)} of {p(found.total_pence)}. The balance is needed
+                before dispatch.
+              </p>
+            )}
+          </div>
+
+          {parcel && (parcel.tracking_number || parcel.carrier) && (
+            <div className="panel" style={{ marginTop: 12 }}>
+              <div className="k">Parcel</div>
+              {parcel.carrier && <div className="rowline"><span className="muted">Carrier</span><b>{parcel.carrier}{parcel.service ? ` · ${parcel.service}` : ''}</b></div>}
+              {parcel.tracking_number && <div className="rowline"><span className="muted">Tracking</span><b className="mono">{parcel.tracking_number}</b></div>}
+              {BIZ.orders?.carrierUrl && (
+                <a className="btn btn-block" style={{ marginTop: 10 }} href={BIZ.orders.carrierUrl}
+                  target="_blank" rel="noopener noreferrer">
+                  Track with the carrier
+                </a>
+              )}
+            </div>
+          )}
+
+          <div className="panel" style={{ marginTop: 12 }}>
+            {found.items?.map((l, i) => (
+              <div className="rowline" key={i}>
+                <span className="muted">{l.qty} × {l.name}</span>
+                <span>{p(l.unit_price_pence * l.qty)}</span>
+              </div>
+            ))}
+            {found.discount_pence > 0 && (
+              <div className="rowline"><span className="muted">Discount</span>
+                <span style={{ color: 'var(--primary)' }}>−{p(found.discount_pence)}</span></div>
+            )}
+            <div className="rowline"><span className="muted">Delivery</span>
+              <span>{found.shipping_pence > 0 ? p(found.shipping_pence) : 'Free'}</span></div>
+            <div className="rowline"><b>Total</b><b className="price">{p(found.total_pence)}</b></div>
+          </div>
+        </>
+      )}
+
+      <p className="tiny muted" style={{ marginTop: 16 }}>
+        Orders placed on this device are also in <button className="linkish" onClick={() => go('account')}>your account</button>.
+      </p>
     </div>
   )
 }
@@ -2687,7 +3340,16 @@ function CartDrawer({ calc, cart, setQty, removeLine, close, checkout, isDesktop
                     <span style={{ color: 'var(--primary)' }}>−{money(calc.discount)}</span>
                   </div>
                 )}
+                <div className="rowline">
+                  <span className="muted">Delivery</span>
+                  <span>{calc.shipping > 0 ? money(calc.shipping) : <b style={{ color: 'var(--good)' }}>Free</b>}</span>
+                </div>
                 <div className="rowline"><b>Total</b><b className="price">{money(calc.total)}</b></div>
+                {calc.freeGap > 0 && (
+                  <p className="tiny muted" style={{ marginTop: 6 }}>
+                    {money(calc.freeGap)} more for free delivery
+                  </p>
+                )}
               </div>
               <p className="tiny muted" style={{ marginTop: 12, textAlign: 'center' }}>
                 Pay by UK bank transfer at checkout. No card details are taken.
@@ -2712,10 +3374,118 @@ function CartDrawer({ calc, cart, setQty, removeLine, close, checkout, isDesktop
    App
    ========================================================================== */
 
+/* ============================================================================
+   Routing.
+
+   Hash routes, not paths, and that is deliberate. The app ships as static files
+   under a relative base (vite `base: './'`) and is served from a subdirectory on
+   GitHub Pages with no rewrite rule, so `/product/bpc-157` would 404 on refresh
+   and every shared link would be dead. A hash route works on any static host,
+   survives a move to another domain, and is still a real linkable URL — which
+   is the point: a product can be linked from a post or an ad, and browser back
+   does what a customer expects instead of leaving the site.
+   ========================================================================== */
+
+const ROUTES = [
+  { view: 'landing', path: '' },
+  { view: 'catalogue', path: 'shop' },
+  { view: 'stacks', path: 'stacks' },
+  { view: 'builder', path: 'build' },
+  { view: 'checkout', path: 'checkout' },
+  { view: 'account', path: 'account' },
+  { view: 'track', path: 'track' },
+  { view: 'education', path: 'library' },
+]
+
+function routeFor(view, productId, guideSlug) {
+  if (view === 'product' && productId) return `#/product/${productId}`
+  if (view === 'guide' && guideSlug) return `#/library/${guideSlug}`
+  const hit = ROUTES.find(r => r.view === view)
+  return hit ? (hit.path ? `#/${hit.path}` : '#/') : '#/'
+}
+
+/* Returns null for a hash we do not recognise, so the caller can fall back to
+   the persisted view rather than dumping someone on the home page. */
+function stateFromRoute(hash) {
+  const raw = String(hash || '').replace(/^#\/?/, '').replace(/\/+$/, '')
+  if (!raw) return { view: 'landing', productId: null, guideSlug: null }
+
+  const [head, tail] = raw.split('/')
+  if (head === 'product' && tail && PRODUCTS[tail]) return { view: 'product', productId: tail, guideSlug: null }
+  if (head === 'library' && tail) {
+    const guide = BIZ.guides.find(g => g.slug === tail)
+    if (guide) return { view: 'guide', productId: null, guideSlug: tail }
+  }
+  const hit = ROUTES.find(r => r.path === head)
+  return hit ? { view: hit.view, productId: null, guideSlug: null } : null
+}
+
+/* ============================================================================
+   Age gate.
+
+   The declaration that actually carries legal weight is the one on the
+   checkout — this is the front door the category expects, and it is what
+   Karl's own shop did. Session-scoped on purpose: it should ask again in a
+   fresh session rather than remember a claim forever, and it deliberately does
+   NOT use `LS` (the bhg.* localStorage helper) for the same reason.
+   ========================================================================== */
+const AGE_KEY = 'bhg.ageOk'
+
+function useAgeGate() {
+  const [verified, setVerified] = useState(() => {
+    try { return sessionStorage.getItem(AGE_KEY) === 'true' } catch { return false }
+  })
+  const confirm = useCallback(() => {
+    try { sessionStorage.setItem(AGE_KEY, 'true') } catch { /* private mode */ }
+    setVerified(true)
+  }, [])
+  return { verified, confirm }
+}
+
+function AgeGate({ onConfirm }) {
+  // Nothing behind the gate should scroll while it is up.
+  useEffect(() => {
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [])
+
+  return (
+    <div className="agegate" role="dialog" aria-modal="true" aria-labelledby="agegate-title">
+      <div className="agegate-card">
+        <img src={asset(BIZ.logoLockup)} alt={BIZ.name} width={132}
+          style={{ height: 'auto', margin: '0 auto 2px', display: 'block' }} />
+        <div className="eyebrow" style={{ marginTop: 14 }}>Age verification</div>
+        <h2 id="agegate-title" style={{ fontSize: 26, margin: '6px 0 10px' }}>You must be 18 or over</h2>
+        <p className="small muted" style={{ lineHeight: 1.6 }}>
+          This site supplies research chemicals for in-vitro laboratory use only. Nothing here is a medicine,
+          a supplement, or for human or animal consumption.
+        </p>
+        <button className="btn btn-primary" style={{ width: '100%', marginTop: 18 }} onClick={onConfirm}>
+          I am 18 or over — enter
+        </button>
+        <a className="btn btn-ghost" style={{ width: '100%', marginTop: 8, justifyContent: 'center' }}
+          href="https://www.google.com">
+          I am under 18 — leave
+        </a>
+        <p className="tiny muted" style={{ marginTop: 14 }}>
+          Entering confirms you are of legal age. You will be asked to confirm you are a qualified researcher
+          before any order is placed.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
-  const [view, setView] = useState(() => LS.get('view', 'landing'))
-  const [productId, setProductId] = useState(() => LS.get('productId', null))
-  const [guideSlug, setGuideSlug] = useState(() => LS.get('guideSlug', null))
+  const age = useAgeGate()
+
+  /* The URL wins when there is one — a shared link must open what it points at,
+     not wherever this browser happened to be last time. */
+  const opening = typeof window !== 'undefined' ? stateFromRoute(window.location.hash) : null
+  const [view, setView] = useState(() => opening?.view ?? LS.get('view', 'landing'))
+  const [productId, setProductId] = useState(() => opening?.productId ?? LS.get('productId', null))
+  const [guideSlug, setGuideSlug] = useState(() => opening?.guideSlug ?? LS.get('guideSlug', null))
   const [cart, setCart] = useState(() => LS.get('cart', { lines: [], bundles: {} }))
   const [orders, setOrders] = useState(() => LS.get('orders', []))
   const [customer, setCustomer] = useState(() => LS.get('customer', null))
@@ -2727,12 +3497,21 @@ export default function App() {
   const [cartOpen, setCartOpen] = useState(false)
   const [toastMsg, setToastMsg] = useState('')
   const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 760)
+  // Bumped once if the live price/stock feed changed anything, to re-render
+  // views that already read the built-in numbers.
+  const [liveVersion, setLiveVersion] = useState(0)
   const scrollRef = useRef({})
 
   useEffect(() => {
     const onResize = () => setIsDesktop(window.innerWidth >= 760)
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    applyLiveCatalogue().then(changed => { if (alive && changed) setLiveVersion(v => v + 1) })
+    return () => { alive = false }
   }, [])
 
   useEffect(() => { LS.set('cart', cart) }, [cart])
@@ -2749,12 +3528,52 @@ export default function App() {
 
   const go = useCallback((next, opts = {}) => {
     scrollRef.current[view] = window.scrollY
+    const nextProduct = opts.product ?? productId
+    const nextGuide = opts.guide ?? guideSlug
     if (opts.product) setProductId(opts.product)
     if (opts.guide) setGuideSlug(opts.guide)
     setView(next)
     setCartOpen(false)
+
+    // One history entry per navigation, so Back walks the app rather than
+    // leaving it. `replace` on the same route avoids stacking duplicates.
+    const url = routeFor(next, nextProduct, nextGuide)
+    if (url !== window.location.hash) window.history.pushState(null, '', url)
+
     requestAnimationFrame(() => window.scrollTo({ top: opts.keepScroll ? (scrollRef.current[next] || 0) : 0 }))
-  }, [view])
+  }, [view, productId, guideSlug])
+
+  /* We restore scroll ourselves per view (scrollRef), so the browser doing it
+     too lands a deep link halfway down the page it just opened. */
+  useEffect(() => {
+    if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual'
+  }, [])
+
+  // Back/forward, and anyone editing the hash by hand.
+  useEffect(() => {
+    const onPop = () => {
+      const st = stateFromRoute(window.location.hash)
+      if (!st) return
+      setView(st.view)
+      setProductId(st.productId)
+      setGuideSlug(st.guideSlug)
+      setCartOpen(false)
+      requestAnimationFrame(() => window.scrollTo({ top: 0 }))
+    }
+    window.addEventListener('popstate', onPop)
+    window.addEventListener('hashchange', onPop)
+    return () => {
+      window.removeEventListener('popstate', onPop)
+      window.removeEventListener('hashchange', onPop)
+    }
+  }, [])
+
+  // Make sure the address bar states where we are, including on first paint
+  // when the view came from localStorage rather than the URL.
+  useEffect(() => {
+    const url = routeFor(view, productId, guideSlug)
+    if (url !== window.location.hash) window.history.replaceState(null, '', url)
+  }, [view, productId, guideSlug])
 
   // Remember where a product was opened from, so Back returns there instead of
   // always dumping you in the catalogue — the builder's info button depends on it.
@@ -2763,7 +3582,7 @@ export default function App() {
     go('product', { product: id })
   }, [go, view])
 
-  const calc = useMemo(() => computeCart(cart), [cart])
+  const calc = useMemo(() => computeCart(cart), [cart, liveVersion])
 
   // Something landing in the cart should be felt, not just announced by a toast.
   const [receiving, setReceiving] = useState(false)
@@ -2779,6 +3598,11 @@ export default function App() {
   }, [calc.count])
 
   const addLine = useCallback((productId, size, qty = 1) => {
+    /* Last line of defence: nothing out of stock reaches the cart, whichever
+       route asked for it — product page, stack, builder or reorder. */
+    const p = PRODUCTS[productId]
+    const s = p?.sizes.find(x => x.label === size)
+    if (!s || !sizeInStock(s)) return
     setCart(c => {
       const existing = c.lines.find(l => l.productId === productId && l.size === size && !l.bundleId)
       if (existing) {
@@ -2798,7 +3622,11 @@ export default function App() {
   }, [])
 
   const addStack = useCallback(stack => {
-    const lines = stack.productIds.map(pid => ({ productId: pid, size: PRODUCTS[pid].sizes[0].label, qty: 1 }))
+    if (!stackAvailable(stack)) {
+      toast(`${stack.name} is out of stock`)
+      return
+    }
+    const lines = stack.productIds.map(pid => ({ productId: pid, size: defaultSize(PRODUCTS[pid]).label, qty: 1 }))
     addBundle({ kind: 'stack', name: stack.name, discountPct: stack.discountPct, origIds: [...stack.productIds] }, lines)
     toast(`${stack.name} added — ${stack.discountPct}% off`)
   }, [addBundle, toast])
@@ -2837,7 +3665,9 @@ export default function App() {
       bundles: cart.bundles,
       subtotal: snapshot.subtotal,
       discount: snapshot.discount,
+      shipping: snapshot.shipping,
       total: snapshot.total,
+      emailed: false,                   // only set true by the store's own answer
     }
     setOrders(o => [order, ...o])
     setCart({ lines: [], bundles: {} })
@@ -2846,6 +3676,13 @@ export default function App() {
 
   const markNotified = useCallback(ref => {
     setOrders(list => list.map(o => (o.ref === ref ? { ...o, notified: true } : o)))
+  }, [])
+
+  /* The order store had the last word: it may have kept a different reference
+     (only if ours collided) and it knows whether the confirmation email left.
+     Reconcile the local copy to whatever it says. */
+  const confirmOrder = useCallback((localRef, patch) => {
+    setOrders(list => list.map(o => (o.ref === localRef ? { ...o, ...patch, notified: true } : o)))
   }, [])
 
   const reorder = useCallback(order => {
@@ -2876,11 +3713,13 @@ export default function App() {
     { id: 'builder', label: 'Build', icon: 'build' },
     { id: 'account', label: 'Account', icon: 'user' },
   ]
-  const navActive = { product: 'catalogue', guide: 'education', checkout: 'account' }[view] || view
+  const navActive = { product: 'catalogue', guide: 'education', checkout: 'account', track: 'account' }[view] || view
 
   return (
     <div className="app">
       <style dangerouslySetInnerHTML={{ __html: styles(BIZ.palette) }} />
+
+      {!age.verified && <AgeGate onConfirm={age.confirm} />}
 
       <header className="floatbar">
         <button className="brand" onClick={() => go('landing')}>
@@ -2913,7 +3752,7 @@ export default function App() {
 
       {/* The landing hero sits behind the floating controls on purpose; every
           other view has to start below them. */}
-      <main key={view + (productId || '') + (guideSlug || '')}
+      <main key={view + (productId || '') + (guideSlug || '') + liveVersion}
         className={cx(view !== 'landing' && 'below-floatbar')}>
         {view === 'landing' && <Landing go={go} openProduct={openProduct} addStack={addStack} />}
         {view === 'catalogue' && <Catalogue openProduct={openProduct} />}
@@ -2929,10 +3768,14 @@ export default function App() {
         )}
         {view === 'checkout' && (
           <Checkout cart={cart} calc={calc} customer={customer} setCustomer={setCustomer}
-            placeOrder={placeOrder} markNotified={markNotified} go={go} toast={toast} />
+            placeOrder={placeOrder} markNotified={markNotified} confirmOrder={confirmOrder}
+            go={go} toast={toast} />
         )}
         {view === 'account' && (
           <Account orders={orders} customer={customer} reorder={reorder} go={go} toast={toast} />
+        )}
+        {view === 'track' && (
+          <TrackView go={go} initialRef={orders[0]?.ref || ''} initialEmail={customer?.email || ''} />
         )}
         {view === 'education' && <Education go={go} />}
         {view === 'guide' && <Guide slug={guideSlug} back={() => go('education')} />}
@@ -2943,7 +3786,10 @@ export default function App() {
           <BrandMark />{BIZ.name}
         </div>
         <p className="tiny muted">{BIZ.established} · {BIZ.email}</p>
-        <p className="tiny muted" style={{ marginTop: 4 }}>Batches independently verified by {BIZ.labPartner}.</p>
+        <p className="tiny" style={{ marginTop: 8 }}>
+          <button className="linkish" onClick={() => go('track')}>Track an order</button>
+        </p>
+        <p className="tiny muted" style={{ marginTop: 4 }}>Every batch supplied with a Certificate of Analysis from an independent laboratory.</p>
         <div style={{ marginTop: 16 }}><DisclaimerBox /></div>
       </footer>
 
