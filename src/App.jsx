@@ -191,27 +191,28 @@ const BIZ = {
     carrierUrl: 'https://www.royalmail.com/track-your-item',
   },
 
-  /* --- Pay by Bank ---------------------------------------------------------
+  /* --- Pay by Bank / GoCardless --------------------------------------------
      Bank transfer only. No cards, ever.
 
-     `pisp.createUrl` is where the app-to-app flow plugs in — the thing that
-     opens the customer's banking app with payee, amount and reference already
-     filled. That handshake is regulated: it needs a licensed payment
-     initiation provider (TrueLayer, Volt, Yapily, Token.io, GoCardless
-     Instant Bank Pay). There is no free URL scheme that does it in the UK, so
-     until an account exists this stays empty and customers get the manual
-     details with one-tap copy instead.
+     LIVE (biohackgold.com, Base44 app 6a085638a471335c65dcd3b5) does NOT read
+     this block. The minified checkout hardcodes:
 
-     When you have one, point `createUrl` at your endpoint. It receives the
-     order as JSON and must return { redirectUrl } — the app sends the
-     customer there and the bank app takes over. Nothing else needs changing.
+       POST /api/functions/initiatePayment  → { redirect_url | redirectUrl }
+       failure → "Could not open GoCardless"
+       POST /api/functions/paymentCallback  → { confirmed, status }
 
-     CHECK THE PROVIDER ACCEPTS THIS CATEGORY BEFORE SIGNING UP: several
-     prohibit research chemicals exactly as the card processors do.          */
+     `pisp.createUrl` is leftover from the original GitHub hook (commit fc6d0be).
+     It is empty in this file AND in the live bundle. Empty is dead config on
+     live, not the thing that opens GoCardless. Do not invent a URL or token
+     here — GoCardless credentials live in that Base44 app's Functions /
+     Integrations / Secrets. The storefront function source is NOT in this repo.
+
+     This shop still shows the Barclays details below as fallback. Live checkout
+     currently hides them, which is why a failed initiatePayment is a sale lost. */
   payments: {
     pisp: {
-      name: '',        // e.g. 'TrueLayer' — shown on the button
-      createUrl: '',   // POST order JSON -> { redirectUrl }
+      name: 'GoCardless',
+      createUrl: '',   // unused on live; do not invent a value
     },
   },
 
@@ -816,30 +817,131 @@ function paymentDetailsText(order) {
   ].join('\n')
 }
 
-/* Hands the order to the payment initiation provider and returns the URL that
-   opens the customer's banking app. Null means no provider configured. */
+/* Live Base44 storefront functions — copied from the production bundle
+   (index-B2W3D7ho.js), not from BIZ.payments.pisp.createUrl. There is no
+   initiatePayment source in this GitHub repo. */
+const LIVE_INITIATE_PAYMENT = '/api/functions/initiatePayment'
+const LIVE_PAYMENT_CALLBACK = '/api/functions/paymentCallback'
+
+/* Shown on checkout when GoCardless cannot open — for Lee. No secret names
+   are guessed: the function source is only in Base44. */
+const PISP_SETUP_CHECKLIST = [
+  'Open the storefront Base44 app that serves biohackgold.com (id 6a085638a471335c65dcd3b5 / Velocis Commerce). Not the ops hub (biohack-ops-f35f9650) — that app has no initiatePayment function.',
+  'Functions → initiatePayment: confirm it is deployed. Open the source. Note the exact secret() / integrations call it uses — do not guess the name.',
+  'Integrations: reconnect GoCardless (Instant Bank Pay / Billing Requests) on that same app.',
+  'Secrets: paste the live GoCardless access token from the GoCardless Dashboard → Developers → Access tokens into whatever name the function actually reads. Never put a token in this repo.',
+  'Redeploy initiatePayment after changing the integration or secret.',
+  'Ignore BIZ.payments.pisp.createUrl — live checkout does not read it. A successful POST /api/functions/initiatePayment must return JSON { redirect_url } or { redirectUrl } to pay.gocardless.com. Empty string is a fail, not a redirect.',
+]
+
+function looksLikePispSetupFailure(status, message) {
+  if (status === 401 || status === 403 || status === 404) return true
+  return /missing order data|not found|not deployed|no redirect|secret|token|unauthor|unexpected end of json/i.test(String(message || ''))
+}
+
+/* Body the live initiatePayment function actually accepts. Extra fields are
+   harmless; omitting `total` / items is how it answers `{ error: "Missing order data" }`
+   and the checkout shows "Could not open GoCardless". */
+function bankPaymentPayload(order) {
+  const customer = order.customer || {}
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const path = typeof window !== 'undefined' ? window.location.pathname : '/'
+  return {
+    order_number: order.ref,
+    reference: order.ref,
+    amount: order.total,
+    currency: 'GBP',
+    total: order.total,
+    subtotal: order.subtotal ?? order.total,
+    shipping: order.shipping ?? 0,
+    discount: order.discount ?? 0,
+    return_url: `${origin}${path}#/checkout?payment=callback&ref=${encodeURIComponent(order.ref || '')}`,
+    payee: {
+      name: BIZ.bank.accountName,
+      sortCode: String(BIZ.bank.sortCode || '').replace(/-/g, ''),
+      accountNumber: BIZ.bank.accountNumber,
+    },
+    customer: {
+      name: customer.name || '',
+      email: customer.email || '',
+      full_name: customer.name || '',
+      address1: customer.line1 || '',
+      city: customer.city || '',
+      zip: customer.postcode || '',
+      country_code: 'GB',
+    },
+    items: (order.lines || []).map(l => ({
+      name: l.name || String(l.productId || 'item'),
+      size: l.size || '',
+      productId: l.productId,
+      quantity: l.qty || 1,
+      unit_price: l.price ?? 0,
+      total: (l.price ?? 0) * (l.qty || 1),
+    })),
+  }
+}
+
+function pispError(message, setup) {
+  const err = new Error(message)
+  err.setup = !!setup
+  return err
+}
+
+/* Hands the order to the live Base44 initiatePayment function (same path as
+   biohackgold.com). BIZ.payments.pisp.createUrl is an optional override only;
+   empty means use the live path, not "skip GoCardless". Never returns ''. */
 async function createBankPayment(order) {
-  const url = BIZ.payments?.pisp?.createUrl
-  if (!url) return null
+  const override = String(BIZ.payments?.pisp?.createUrl || '').trim()
+  const url = override || LIVE_INITIATE_PAYMENT
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      reference: order.ref,
-      amount: order.total,
-      currency: 'GBP',
-      payee: {
-        name: BIZ.bank.accountName,
-        sortCode: BIZ.bank.sortCode.replace(/-/g, ''),
-        accountNumber: BIZ.bank.accountNumber,
-      },
-      customer: { name: order.customer.name, email: order.customer.email },
-    }),
+    body: JSON.stringify(bankPaymentPayload(order)),
   })
-  if (!res.ok) throw new Error(`Payment provider returned ${res.status}`)
-  const data = await res.json()
-  if (!data?.redirectUrl) throw new Error('Payment provider returned no redirectUrl')
-  return data.redirectUrl
+  const data = await res.json().catch(() => ({}))
+  const message = data.error || data.message || (!res.ok ? `Payment provider returned ${res.status}` : '')
+  if (!res.ok) throw pispError(message || `Payment provider returned ${res.status}`, looksLikePispSetupFailure(res.status, message))
+  if (message && !data.redirectUrl && !data.redirect_url) {
+    throw pispError(message, looksLikePispSetupFailure(res.status, message))
+  }
+  const redirect = data.redirectUrl || data.redirect_url
+  if (!redirect) throw pispError('Payment provider returned no redirect URL.', true)
+  return redirect
+}
+
+async function notifyPaymentCallback(orderRef) {
+  const override = String(BIZ.payments?.pisp?.callbackUrl || '').trim()
+  const url = override || LIVE_PAYMENT_CALLBACK
+  if (!orderRef) return null
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ order_number: orderRef, ref: orderRef }),
+    })
+    return await res.json().catch(() => ({}))
+  } catch {
+    return null
+  }
+}
+
+function hashQuery() {
+  if (typeof window === 'undefined') return new URLSearchParams()
+  const hash = window.location.hash || ''
+  const q = hash.indexOf('?')
+  return new URLSearchParams(q >= 0 ? hash.slice(q + 1) : '')
+}
+
+function PispSetupChecklist({ intro }) {
+  return (
+    <div className="panel" style={{ marginTop: 12, borderColor: 'color-mix(in srgb, var(--warn) 40%, transparent)' }}>
+      <p className="small" style={{ color: 'var(--warn)' }}>{intro}</p>
+      <p className="tiny muted" style={{ marginTop: 8 }}>Shop owner — reconnect checklist (customers can still pay with the details below):</p>
+      <ol className="tiny muted" style={{ margin: '8px 0 0', paddingLeft: 18, lineHeight: 1.55 }}>
+        {PISP_SETUP_CHECKLIST.map(item => <li key={item}>{item}</li>)}
+      </ol>
+    </div>
+  )
 }
 
 /* A line's SKU is `productId-size`, upper-cased and reduced to A–Z0–9 and
@@ -2632,6 +2734,7 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
   const [sent, setSent] = useState(false)
   const [paying, setPaying] = useState(false)
   const [payError, setPayError] = useState('')
+  const [paySetup, setPaySetup] = useState(false)
   const [form, setForm] = useState(() => ({
     name: '', email: '', phone: '', line1: '', city: '', postcode: '', ...customer,
   }))
@@ -2658,12 +2761,47 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
     return Object.keys(e).length === 0
   }
 
+  const startGoCardless = async (o) => {
+    if (!o) return
+    setPaying(true)
+    setPayError('')
+    setPaySetup(false)
+    try {
+      const url = await createBankPayment(o)
+      window.location.assign(url)
+    } catch (e) {
+      setPayError(e.message || 'Could not open GoCardless')
+      setPaySetup(!!e.setup)
+      setPaying(false)
+    }
+  }
+
+  useEffect(() => {
+    const q = hashQuery()
+    if (q.get('payment') !== 'callback') return
+    const ref = q.get('ref')
+    const saved = LS.get('orders', [])
+    const hit = (ref && saved.find(o => o.ref === ref)) || saved[0] || null
+    if (hit) {
+      setOrder(hit)
+      setStep(2)
+      notifyPaymentCallback(hit.ref).then(data => {
+        if (data?.confirmed) confirmOrder(hit.ref, { status: 'paid', paymentDeclared: true })
+      })
+    }
+    const clean = routeFor('checkout')
+    if (typeof window !== 'undefined' && window.location.hash !== clean) {
+      window.history.replaceState(null, '', clean)
+    }
+  }, [confirmOrder])
+
   const toPayment = () => {
     if (!validate()) return
     setCustomer(form)
     const o = placeOrder(form)
     setOrder(o)
     setStep(2)
+    startGoCardless(o)
     // Try to deliver it. If there is no endpoint configured, or the POST fails,
     // `sent` stays false and the screen asks the customer to send it instead —
     // it must never claim to have done something it hasn't.
@@ -2700,7 +2838,7 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
   return (
     <div className="view wrap" style={{ maxWidth: 620 }}>
       <section className="section" style={{ paddingBottom: 10 }}>
-        <div className="eyebrow">{['Review order', 'Delivery details', 'Pay by bank'][step]}</div>
+        <div className="eyebrow">{['Review order', 'Delivery details', 'GoCardless'][step]}</div>
         <h2 style={{ fontSize: 23 }}>{step === 2 ? 'Order placed' : 'Checkout'}</h2>
       </section>
 
@@ -2803,7 +2941,7 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
             </button>
           </div>
           <p className="tiny muted" style={{ marginTop: 12, textAlign: 'center' }}>
-            No card details are taken. Payment is by UK bank transfer.
+            Secure payment via GoCardless. UK bank transfer details stay on the next screen as fallback.
           </p>
         </>
       )}
@@ -2815,12 +2953,18 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
               {I.check({ width: 22, height: 22 })}
             </div>
             <h3 style={{ fontSize: 18 }}>
-              {sending ? `Placing order ${order.ref}…` : sent ? `Order ${order.ref} is with us` : `Order ${order.ref} created`}
+              {paying ? 'Opening GoCardless secure payment…'
+                : payError ? 'Payment could not be opened'
+                : sending ? `Placing order ${order.ref}…`
+                : sent ? `Order ${order.ref} is with us`
+                : `Order ${order.ref} created`}
             </h3>
             <p className="small muted" style={{ marginTop: 8 }}>
-              Send {money(order.total)} using the details below. Quote the reference exactly — it is how your payment
-              is matched to your order automatically.
+              {paying
+                ? 'Redirecting you to GoCardless. No payment has been taken yet.'
+                : `Send ${money(order.total)} via GoCardless, or use the bank details below quoting ${order.ref}.`}
             </p>
+            {payError && <p className="err" style={{ marginTop: 10 }}>{payError}</p>}
             {/* Only claimed when the order store says the email actually went.
                 An unsent confirmation the screen swears it sent is how someone
                 waits three days for an email that never existed. */}
@@ -2829,30 +2973,16 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
                 These details are also in your inbox at {order.customer?.email}.
               </p>
             )}
+            {!paying && (
+              <button className="btn btn-primary btn-block" style={{ marginTop: 14 }}
+                onClick={() => startGoCardless(order)}>
+                {payError ? 'Try GoCardless again' : 'Continue with GoCardless'}
+              </button>
+            )}
           </div>
 
-
-          {/* App-to-app: opens the customer's banking app with everything
-              already filled. Only exists once a provider is configured. */}
-          {BIZ.payments?.pisp?.createUrl && (
-            <div style={{ marginTop: 12 }}>
-              <button className="btn btn-primary btn-block" disabled={paying}
-                onClick={async () => {
-                  setPaying(true); setPayError('')
-                  try {
-                    const url = await createBankPayment(order)
-                    if (url) window.location.href = url
-                  } catch (e) {
-                    setPayError('Could not open your bank. Use the details below instead.')
-                  } finally { setPaying(false) }
-                }}>
-                {paying ? 'Opening your bank…' : 'Pay from your banking app'}
-              </button>
-              <p className="tiny muted" style={{ marginTop: 9, textAlign: 'center' }}>
-                Opens your bank with the amount and reference already filled. No card details are taken.
-              </p>
-              {payError && <p className="err" style={{ textAlign: 'center' }}>{payError}</p>}
-            </div>
+          {(payError || paySetup) && (
+            <PispSetupChecklist intro="GoCardless did not open. Live checkout calls POST /api/functions/initiatePayment — not BIZ.payments.pisp.createUrl (that field is empty leftover). Customers can still pay with the bank details below." />
           )}
 
           {/* Which app they are paying from. Both rails are the same account —
@@ -2868,9 +2998,7 @@ function Checkout({ cart, calc, customer, setCustomer, placeOrder, markNotified,
           )}
 
           <div className="panel" style={{ marginTop: 12 }}>
-            {BIZ.payments?.pisp?.createUrl && (
-              <p className="tiny muted" style={{ marginBottom: 4 }}>Or transfer manually:</p>
-            )}
+            <p className="tiny muted" style={{ marginBottom: 4 }}>Or transfer manually:</p>
 
             <div className="qrrow">
               <PayQR text={paymentDetailsText(order)} />
@@ -3407,7 +3535,8 @@ function routeFor(view, productId, guideSlug) {
 /* Returns null for a hash we do not recognise, so the caller can fall back to
    the persisted view rather than dumping someone on the home page. */
 function stateFromRoute(hash) {
-  const raw = String(hash || '').replace(/^#\/?/, '').replace(/\/+$/, '')
+  const stripped = String(hash || '').replace(/^#\/?/, '')
+  const raw = stripped.split('?')[0].replace(/\/+$/, '')
   if (!raw) return { view: 'landing', productId: null, guideSlug: null }
 
   const [head, tail] = raw.split('/')
