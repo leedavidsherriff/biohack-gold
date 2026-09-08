@@ -81,14 +81,17 @@ they are platform pages.
 add `<meta name="robots" content="noindex, nofollow">` while the site is not
 finished.
 
-**6. Leave the backend alone.** The shop posts orders to, and reads its live
-prices from, an order store that already exists — the endpoints are in the `BIZ`
-block and they work. Do NOT rewire it to this app's own `Product` and `Order`
-entities, do not add `base44.entities` calls to it, and do not create backend
-functions for it. That store re-prices every line server-side, caps the
-discount, refuses anything without the eligibility declaration, allocates the
-payment reference and sends the confirmation email. Writing orders straight
-from the browser would throw all of that away.
+**6. Leave the order-store backend alone.** The shop posts orders to, and reads
+its live prices from, an order store that already exists — `placeOrder` /
+`trackOrder` / `catalogue` on **biohack-ops** (`…f35f9650`). Do NOT rewire
+those to this app's own `Product` and `Order` entities.
+
+**Do not delete `initiatePayment` or `paymentCallback`.** Those two functions
+live on **this storefront app** (6a085638a471335c65dcd3b5), not on ops. Live
+checkout POSTs `/api/functions/initiatePayment` and expects `{ redirect_url }`.
+Their source is not in the GitHub repo. GoCardless tokens stay in this app's
+Integrations / Secrets — never in `App.jsx`. `BIZ.payments.pisp.createUrl` is
+empty leftover and is not what live uses.
 
 **Rules that are not up for negotiation** — these are legal and commercial, not
 stylistic:
@@ -120,6 +123,22 @@ checkout payment screen.
 - **Prices can be changed without a deploy**, from the catalogue editor in that
   same hub. The shop reads them on load and falls back to its built-in prices if
   the call fails.
+
+## GoCardless (storefront functions — not in this GitHub repo)
+
+Live checkout does **not** read `BIZ.payments.pisp.createUrl` (empty in GitHub
+and in the live bundle). It POSTs `/api/functions/initiatePayment` on this
+Base44 app. Observed contract (no credentials, probed 8 Sep 2026):
+
+- POST JSON with `order_number`, `customer`, `items`, `total`, `return_url`
+- 200 `{ redirect_url, billing_request_id, order_number }` → `pay.gocardless.com`
+- Missing body → `{ error: "Missing order data" }`
+- `paymentCallback` without `order_number` → `{ error: "Missing order_number" }`
+- Same function is **not** deployed on biohack-ops (404)
+
+Reconnect: open this app's `initiatePayment` source, reconnect the GoCardless
+integration, set the secret **the function actually reads**, redeploy. Do not
+invent a `createUrl` or an API key in the shop file.
 
 ## Still outstanding, unrelated to this move
 
